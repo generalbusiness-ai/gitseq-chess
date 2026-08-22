@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -36,7 +37,11 @@ func TestCommandsInitializeAndPlayThroughThePublicHost(t *testing.T) {
 	if initialized["genesis"] == "" || initialized["player_key"] == "" {
 		t.Fatalf("init output = %+v", initialized)
 	}
-	created := call("create", "--repo", repo, "--color", "white", "--join-secret", "one use")
+	secretFile := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(secretFile, []byte("one use\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	created := call("create", "--repo", repo, "--color", "white", "--join-secret-file", secretFile)
 	game, ok := created["game"].(string)
 	if !ok || game == "" || created["effective"] != true || created["invitation"] == "" {
 		t.Fatalf("create output = %+v", created)
@@ -50,7 +55,7 @@ func TestCommandsInitializeAndPlayThroughThePublicHost(t *testing.T) {
 		t.Fatalf("invitation %q round-trips as game %q secret %q: %v", invitation, invitation.Query().Get("game"), fragment.Get("secret"), err)
 	}
 	bob := filepath.Join(t.TempDir(), "bob.key")
-	joined := call("join", "--repo", repo, "--key", bob, "--game", game, "--secret", "one use")
+	joined := call("join", "--repo", repo, "--key", bob, "--game", game, "--secret-file", secretFile)
 	if joined["effective"] != true {
 		t.Fatalf("join output = %+v", joined)
 	}

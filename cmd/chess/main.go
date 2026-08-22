@@ -45,9 +45,9 @@ func run(ctx context.Context, args []string, stdout io.Writer, stdin io.Reader) 
 	case "serve":
 		return runServe(ctx, args[1:], stdout)
 	case "create":
-		return runCreate(ctx, args[1:], stdout)
+		return runCreate(ctx, args[1:], stdout, stdin)
 	case "join":
-		return runJoin(ctx, args[1:], stdout)
+		return runJoin(ctx, args[1:], stdout, stdin)
 	case "move":
 		return runMove(ctx, args[1:], stdout)
 	case "board":
@@ -75,14 +75,16 @@ func runInit(ctx context.Context, args []string, stdout io.Writer) error {
 	if output, err := exec.CommandContext(ctx, "git", "init", "-q", *repo).CombinedOutput(); err != nil {
 		return fmt.Errorf("initialize Git repository: %w: %s", err, strings.TrimSpace(string(output)))
 	}
-	keyPath, err := defaultKeyPath(ctx, *repo)
+	store, err := openKeyStore(ctx, "", *repo, false)
 	if err != nil {
 		return err
 	}
-	key, err := ensureKey(keyPath)
+	defer store.Close()
+	key, err := ensureKey(store)
 	if err != nil {
 		return err
 	}
+	keyPath := store.path()
 	workspace, err := host.Init(ctx, *repo, application.Application, key, host.Options{PayloadCeiling: 16 << 10})
 	if err != nil {
 		return err
@@ -115,35 +117,40 @@ func openWriter(ctx context.Context, flags *commonFlags) (*host.Workspace, ed255
 	if err != nil {
 		return nil, nil, err
 	}
-	path := flags.key
-	if path == "" {
-		path, err = defaultKeyPath(ctx, flags.repo)
-		if err != nil {
-			return nil, nil, err
-		}
+	store, err := openKeyStore(ctx, flags.key, flags.repo, flags.key != "")
+	if err != nil {
+		return nil, nil, err
 	}
-	key, err := ensureKey(path)
+	defer store.Close()
+	key, err := ensureKey(store)
 	if err != nil {
 		return nil, nil, err
 	}
 	return workspace, key, nil
 }
 
-func runCreate(ctx context.Context, args []string, stdout io.Writer) error {
+func runCreate(ctx context.Context, args []string, stdout io.Writer, stdin io.Reader) error {
 	set := flag.NewFlagSet("create", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
 	common := addCommon(set, true)
 	color := set.String("color", "white", "creator color: white or black")
 	inviteKey := set.String("invite-key", "", "invited opponent fingerprint")
-	joinSecret := set.String("join-secret", "", "secret carried by the invitation link")
+	// The secret is read from a file or from standard input, never taken as a
+	// flag value: an argument is visible in the process table to every account
+	// on the machine for as long as the command runs.
+	joinSecretFile := set.String("join-secret-file", "", "file holding the invitation secret, or - for standard input")
 	if err := parseNoPositionals(set, args); err != nil {
+		return err
+	}
+	joinSecret, err := readSecret(*joinSecretFile, stdin)
+	if err != nil {
 		return err
 	}
 	workspace, key, err := openWriter(ctx, common)
 	if err != nil {
 		return err
 	}
-	record, err := application.Create(ctx, workspace, key, *color, *inviteKey, *joinSecret, common.idem)
+	record, err := application.Create(ctx, workspace, key, *color, *inviteKey, joinSecret, common.idem)
 	if err != nil {
 		return err
 	}
@@ -152,27 +159,33 @@ func runCreate(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 	result["game"] = record.ID
-	if *joinSecret != "" {
+	if joinSecret != "" {
+		// The invitation is the caller's to pass on out of band. It carries the
+		// secret in a fragment, which no correct client sends to a server.
 		query := url.Values{"game": []string{record.ID}}
-		result["invitation"] = "chess://join?" + query.Encode() + "#secret=" + url.QueryEscape(*joinSecret)
+		result["invitation"] = "chess://join?" + query.Encode() + "#secret=" + url.QueryEscape(joinSecret)
 	}
 	return writeJSON(stdout, result)
 }
 
-func runJoin(ctx context.Context, args []string, stdout io.Writer) error {
+func runJoin(ctx context.Context, args []string, stdout io.Writer, stdin io.Reader) error {
 	set := flag.NewFlagSet("join", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
 	common := addCommon(set, true)
 	game := set.String("game", "", "create record identifier")
-	secret := set.String("secret", "", "invitation secret")
+	secretFile := set.String("secret-file", "", "file holding the invitation secret, or - for standard input")
 	if err := parseNoPositionals(set, args); err != nil {
+		return err
+	}
+	secret, err := readSecret(*secretFile, stdin)
+	if err != nil {
 		return err
 	}
 	workspace, key, err := openWriter(ctx, common)
 	if err != nil {
 		return err
 	}
-	record, err := application.Join(ctx, workspace, key, *game, *secret, common.idem)
+	record, err := application.Join(ctx, workspace, key, *game, secret, common.idem)
 	if err != nil {
 		return err
 	}
@@ -628,49 +641,269 @@ func strictJSON(data []byte, target any) error {
 	return nil
 }
 
-func defaultKeyPath(ctx context.Context, repo string) (string, error) {
+func gitCommonDir(ctx context.Context, repo string) (string, error) {
 	command := exec.CommandContext(ctx, "git", "-C", repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("locate Git directory: %w: %s", err, strings.TrimSpace(string(output)))
 	}
-	return filepath.Join(strings.TrimSpace(string(output)), "chess", "player.key"), nil
+	return strings.TrimSpace(string(output)), nil
 }
 
-func ensureKey(path string) (ed25519.PrivateKey, error) {
-	if path == "" {
+// keyFileMode is the only mode a private key may carry: readable and writable
+// by its owner and by nobody else.
+const keyFileMode = 0o600
+
+// maxSecretBytes bounds a secret read from a file or from standard input, so
+// a wrong path cannot make the process read something enormous.
+const maxSecretBytes = 4 << 10
+
+// keyStore is the directory holding a player key, kept open for the whole
+// operation.
+//
+// Checking a path and then using it by name is two different questions asked
+// at two different moments, and anything under the attacker's control can move
+// in between. os.Root keeps a descriptor on the directory and resolves every
+// name beneath it, so a component swapped after the check does not change what
+// is opened, and a symbolic link cannot lead outside the root at all.
+//
+// Refusing a link that stays inside the root is separate work, because os.Root
+// follows those by contract. Each such refusal is made by naming the thing,
+// opening it, and proving the two answers describe the same file: a static
+// link is refused outright, and a link swapped in mid-operation can only pass
+// if it resolves to the very inode that was named.
+type keyStore struct {
+	root *os.Root
+	name string
+	// link publishes the finished temporary file under the key's real name.
+	// It is a field so a test can interrupt at exactly that boundary; nothing
+	// in the program replaces it.
+	link func(temporary, name string) error
+}
+
+// openKeyStore decides which directory bounds the key.
+//
+// A path this program chose is bounded by the Git common directory, so no
+// component of it may be a link out. A path the operator named with --key is
+// bounded only by its own parent: they chose where it lives, and the checks
+// that remain are the ones protecting the key file, not its location.
+func openKeyStore(ctx context.Context, path, repo string, named bool) (*keyStore, error) {
+	if named && path == "" {
 		return nil, errors.New("key path is required")
 	}
-	encoded, err := os.ReadFile(path)
+	if named {
+		root, err := os.OpenRoot(filepath.Dir(path))
+		if err != nil {
+			return nil, fmt.Errorf("open key directory: %w", err)
+		}
+		return newKeyStore(root, filepath.Base(path)), nil
+	}
+	common, err := gitCommonDir(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+	outer, err := os.OpenRoot(common)
+	if err != nil {
+		return nil, fmt.Errorf("open Git directory: %w", err)
+	}
+	defer outer.Close()
+	inner, err := openDirectory(outer, "chess")
+	if err != nil {
+		return nil, err
+	}
+	return newKeyStore(inner, "player.key"), nil
+}
+
+// openDirectory pins one directory beneath root, refusing a symbolic link
+// standing in for it.
+//
+// os.Root refuses a link that leaves the root and follows one that does not,
+// so it cannot make this refusal on its own; measured on Go 1.26, both
+// Root.OpenFile and Root.OpenRoot follow an in-root link. The refusal is made
+// by asking what the name is, opening it, and proving the two answers describe
+// the same directory. A swap in between makes them disagree.
+func openDirectory(root *os.Root, name string) (*os.Root, error) {
+	named, err := root.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		// Mkdir fails if anything already holds the name, so winning it means
+		// no link can be in the way. Losing it to another process is ordinary,
+		// not an error: fall through and check what they made the same way.
+		if err := root.Mkdir(name, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+			return nil, fmt.Errorf("create player key directory: %w", err)
+		}
+		named, err = root.Lstat(name)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if named.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%s is a symbolic link; refusing to keep a private key beneath it", filepath.Join(root.Name(), name))
+	}
+	if !named.IsDir() {
+		return nil, fmt.Errorf("%s is not a directory", filepath.Join(root.Name(), name))
+	}
+	opened, err := root.OpenRoot(name)
+	if err != nil {
+		return nil, err
+	}
+	current, err := opened.Stat(".")
+	if err != nil {
+		opened.Close()
+		return nil, err
+	}
+	if !os.SameFile(named, current) {
+		opened.Close()
+		return nil, fmt.Errorf("%s changed while it was being opened; refusing to use it", filepath.Join(root.Name(), name))
+	}
+	return opened, nil
+}
+
+func newKeyStore(root *os.Root, name string) *keyStore {
+	store := &keyStore{root: root, name: name}
+	store.link = func(temporary, name string) error { return store.root.Link(temporary, name) }
+	return store
+}
+
+func (s *keyStore) Close() error { return s.root.Close() }
+
+// path is for messages only. Never reopen by it.
+func (s *keyStore) path() string { return filepath.Join(s.root.Name(), s.name) }
+
+// ensureKey loads the player key, or publishes a new one.
+func ensureKey(store *keyStore) (ed25519.PrivateKey, error) {
+	private, err := readKey(store)
 	if err == nil {
-		return decodeKey(encoded)
+		return private, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("read player key: %w", err)
+		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, fmt.Errorf("create player key directory: %w", err)
-	}
-	_, private, err := ed25519.GenerateKey(rand.Reader)
+	// The directory is pinned by openKeyStore, and Root.Chmod is documented as
+	// racy on Unix, so it is not adjusted here. A umask can only narrow the
+	// mode, and a directory too narrow to enter fails closed.
+	_, generated, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, errors.New("generate player key")
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
+	if err := publishKey(store, generated); err != nil {
 		if errors.Is(err, os.ErrExist) {
-			encoded, readErr := os.ReadFile(path)
-			if readErr != nil {
-				return nil, fmt.Errorf("read concurrently created player key: %w", readErr)
-			}
-			return decodeKey(encoded)
+			// Somebody else published first. Theirs is the key.
+			return readKey(store)
 		}
-		return nil, fmt.Errorf("create player key: %w", err)
+		return nil, err
+	}
+	return generated, nil
+}
+
+// readKey reads an existing key, refusing one reached through a symbolic link
+// or readable by anyone but its owner.
+func readKey(store *keyStore) (ed25519.PrivateKey, error) {
+	// os.Root follows a link that stays inside the root, so the refusal is
+	// made here: ask what the name is, open it, and then prove the thing
+	// opened is the thing asked about. A swap between the two answers makes
+	// them disagree, and disagreement is a refusal.
+	named, err := store.root.Lstat(store.name)
+	if err != nil {
+		return nil, err
+	}
+	if named.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%s is a symbolic link; refusing to follow it to a private key", store.path())
+	}
+	if !named.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", store.path())
+	}
+	file, err := store.root.OpenFile(store.name, os.O_RDONLY, 0)
+	if err != nil {
+		return nil, err
 	}
 	defer file.Close()
-	if _, err := fmt.Fprintln(file, hex.EncodeToString(private)); err != nil {
-		return nil, fmt.Errorf("write player key: %w", err)
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("read player key: %w", err)
 	}
-	return private, nil
+	if !os.SameFile(named, info) {
+		return nil, fmt.Errorf("%s changed while it was being opened; refusing to read it", store.path())
+	}
+	if permission := info.Mode().Perm(); permission&0o077 != 0 {
+		return nil, fmt.Errorf("player key %s is mode %04o; it must be %04o so that only its owner can read it", store.path(), permission, keyFileMode)
+	}
+	encoded, err := io.ReadAll(io.LimitReader(file, 4<<10))
+	if err != nil {
+		return nil, fmt.Errorf("read player key: %w", err)
+	}
+	return decodeKey(encoded)
+}
+
+// publishKey writes a key beside its destination and links it into place, so
+// the name never exists holding a half-written key. Link fails rather than
+// replacing an existing file, so a concurrent publisher cannot be overwritten
+// and the loser can simply read the winner's key.
+func publishKey(store *keyStore, private ed25519.PrivateKey) error {
+	var suffix [8]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return fmt.Errorf("create player key: %w", err)
+	}
+	temporary := "." + hex.EncodeToString(suffix[:]) + ".key"
+	file, err := store.root.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, keyFileMode)
+	if err != nil {
+		return fmt.Errorf("create player key: %w", err)
+	}
+	defer store.root.Remove(temporary)
+	// The mode passed to OpenFile is filtered by the process umask, so a
+	// restrictive umask would leave the key at 0400 or 0000 and a permissive
+	// one is not the only risk. Chmod on the open descriptor sets the mode we
+	// actually promised.
+	if err := file.Chmod(keyFileMode); err != nil {
+		file.Close()
+		return fmt.Errorf("secure player key: %w", err)
+	}
+	if _, err := fmt.Fprintln(file, hex.EncodeToString(private)); err != nil {
+		file.Close()
+		return fmt.Errorf("write player key: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return fmt.Errorf("write player key: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("write player key: %w", err)
+	}
+	return store.link(temporary, store.name)
+}
+
+// readSecret takes an invitation secret from a file, or from standard input
+// when the name is "-". Passing a secret as a flag value publishes it in the
+// process table to every account on the machine, which is why there is no
+// flag that carries the value itself.
+//
+// Naming a source and getting nothing from it is an error, not an absent
+// secret. Treating it as absent would turn a typo into an open invitation that
+// anyone can accept.
+func readSecret(name string, stdin io.Reader) (string, error) {
+	if name == "" {
+		return "", nil
+	}
+	source := stdin
+	if name != "-" {
+		file, err := os.Open(name)
+		if err != nil {
+			return "", fmt.Errorf("read secret: %w", err)
+		}
+		defer file.Close()
+		source = file
+	}
+	encoded, err := io.ReadAll(io.LimitReader(source, maxSecretBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("read secret: %w", err)
+	}
+	if len(encoded) > maxSecretBytes {
+		return "", fmt.Errorf("secret is longer than %d bytes", maxSecretBytes)
+	}
+	secret := strings.TrimRight(string(encoded), "\r\n")
+	if secret == "" {
+		return "", errors.New("secret source is empty; omit the flag to create an open invitation")
+	}
+	return secret, nil
 }
 
 func decodeKey(encoded []byte) (ed25519.PrivateKey, error) {
