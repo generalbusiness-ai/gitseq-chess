@@ -85,10 +85,13 @@ the chosen key; tool results contain only public record data and fold decisions.
 - Resignations and draw offers name the current move chain. A draw acceptance
   rests on the exact pending offer and only the other seated player may accept.
 - `gitseq/identity-anchor@0` is shared host vocabulary; chess does not create
-  its own identity system. This head records anchors but keeps seat authority
-  on the exact session key until the host exposes position-aware identity
-  resolution. Second-granular timestamps alone cannot safely order an anchor,
-  revocation, and move accepted in the same second.
+  its own identity system. A seat belongs to a chess-scoped anchored identity
+  when one is in force at the exact create, join, or later act position;
+  otherwise it belongs to the exact session key. A seated key may therefore
+  play first and upgrade later, and another currently anchored key for that
+  identity can recover the seat. Anchor, delegation, revocation, and move
+  records that share one signed second still take force only in verified log
+  order. Expiry continues to use the record's signed timestamp.
 
 Run `go test -count=1 ./...` for fold, mutation-witness, invitation, pagination,
 and real external-host integration coverage.

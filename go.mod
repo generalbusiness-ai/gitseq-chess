@@ -3,7 +3,7 @@ module github.com/generalbusiness-ai/gitseq-chess
 go 1.26.0
 
 require (
-	github.com/generalbusiness-ai/gitseq v0.0.0-20260822130102-7e7b8412bcd9
+	github.com/generalbusiness-ai/gitseq v0.0.0-20260822221118-dea7c0a84796
 	github.com/notnil/chess v1.10.0
 )
 

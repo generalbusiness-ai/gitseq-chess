@@ -93,6 +93,8 @@ type Projection struct {
 	// RefusedTotal includes refusals older than the bounded Refused tail.
 	RefusedTotal int            `json:"refused_total"`
 	ByID         map[string]int `json:"-"`
+
+	identities *identity.Resolution
 }
 
 // Game is one game's complete current state. Actor fingerprints and record
@@ -117,6 +119,19 @@ type Game struct {
 	invitation *Invitation
 	join       string
 	engine     *rules.Game
+	whiteSeat  seat
+	blackSeat  seat
+	offeredBy  string
+}
+
+// seat is the authority captured when a player sits down. An unanchored seat
+// belongs to its exact session key. Once that key acts under a chess-scoped
+// anchor, the seat is upgraded to the persistent identity and any currently
+// anchored key for that identity may act for it.
+type seat struct {
+	actor    string
+	identity identity.Identity
+	anchored bool
 }
 
 // Refusal is an application act that was recorded but had no force.
@@ -129,7 +144,10 @@ type Refusal struct {
 // Fold interprets records in their verified order. Malformed and unauthorized
 // chess acts are retained as bounded refusals; unknown schemas stay opaque.
 func Fold(log host.Log) Projection {
-	p := Projection{Genesis: log.Genesis, Head: log.Head, Depth: log.Depth, ByID: map[string]int{}}
+	p := Projection{
+		Genesis: log.Genesis, Head: log.Head, Depth: log.Depth,
+		ByID: map[string]int{}, identities: identity.Resolve(log),
+	}
 	for _, record := range log.Records {
 		switch record.Schema {
 		case SchemaCreate:
@@ -190,8 +208,10 @@ func (p *Projection) foldCreate(record host.Record) {
 	}
 	if body.CreatorColor == "white" {
 		game.White = record.Actor
+		game.whiteSeat = p.seatAt(record, game.ID)
 	} else {
 		game.Black = record.Actor
+		game.blackSeat = p.seatAt(record, game.ID)
 	}
 	if body.Invitation != nil {
 		copy := *body.Invitation
@@ -242,8 +262,10 @@ func (p *Projection) foldJoin(record host.Record) {
 	}
 	if game.White == "" {
 		game.White = record.Actor
+		game.whiteSeat = p.seatAt(record, game.ID)
 	} else {
 		game.Black = record.Actor
+		game.blackSeat = p.seatAt(record, game.ID)
 	}
 	game.join = record.ID
 	game.LastMove = record.ID
@@ -270,11 +292,11 @@ func (p *Projection) foldMove(record host.Record) {
 		p.refuse(record, body.Game, "move does not continue the accepted move chain")
 		return
 	}
-	want := game.White
+	want := &game.whiteSeat
 	if game.engine.Position().Turn() == rules.Black {
-		want = game.Black
+		want = &game.blackSeat
 	}
-	if !sameSeat(want, record.Actor) {
+	if !p.sameSeat(want, record, game.ID) {
 		p.refuse(record, body.Game, "actor does not hold the side to move")
 		return
 	}
@@ -287,8 +309,9 @@ func (p *Projection) foldMove(record host.Record) {
 		return
 	}
 	// Moving instead of accepting is a refusal of the other player's offer.
-	if game.DrawOffer != "" && !sameSeat(game.OfferedBy, record.Actor) {
+	if game.DrawOffer != "" && p.seatSide(game, record) != game.offeredBy {
 		game.DrawOffer, game.OfferedBy = "", ""
+		game.offeredBy = ""
 	}
 	game.LastMove = record.ID
 	game.LastMoveUCI = body.Move
@@ -311,7 +334,7 @@ func (p *Projection) foldResign(record host.Record) {
 		p.refuse(record, body.Game, "resignation does not name the current move chain")
 		return
 	}
-	side := seatSide(game, record.Actor)
+	side := p.seatSide(game, record)
 	if side == "" {
 		p.refuse(record, body.Game, "actor holds no seat")
 		return
@@ -339,7 +362,8 @@ func (p *Projection) foldDrawOffer(record host.Record) {
 		p.refuse(record, body.Game, "draw offer does not name the current move chain")
 		return
 	}
-	if seatSide(game, record.Actor) == "" {
+	side := p.seatSide(game, record)
+	if side == "" {
 		p.refuse(record, body.Game, "actor holds no seat")
 		return
 	}
@@ -348,6 +372,7 @@ func (p *Projection) foldDrawOffer(record host.Record) {
 		return
 	}
 	game.DrawOffer, game.OfferedBy = record.ID, record.Actor
+	game.offeredBy = side
 }
 
 func (p *Projection) foldDrawAccept(record host.Record) {
@@ -365,7 +390,8 @@ func (p *Projection) foldDrawAccept(record host.Record) {
 		p.refuse(record, body.Game, "draw acceptance does not answer the pending offer")
 		return
 	}
-	if seatSide(game, record.Actor) == "" || sameSeat(game.OfferedBy, record.Actor) {
+	side := p.seatSide(game, record)
+	if side == "" || side == game.offeredBy {
 		p.refuse(record, body.Game, "only the other seated player may accept the draw")
 		return
 	}
@@ -446,23 +472,55 @@ func validActorFingerprint(value string) bool {
 	return err == nil && len(raw) == sha256.Size && value == strings.ToLower(value)
 }
 
-func seatSide(game *Game, actor string) string {
-	if sameSeat(game.White, actor) {
+func (p *Projection) seatSide(game *Game, record host.Record) string {
+	white := p.sameSeat(&game.whiteSeat, record, game.ID)
+	black := p.sameSeat(&game.blackSeat, record, game.ID)
+	if white && !black {
 		return "white"
 	}
-	if sameSeat(game.Black, actor) {
+	if black && !white {
 		return "black"
 	}
 	return ""
 }
 
-func sameSeat(seat, actor string) bool {
-	// The host identity package currently resolves authority by second-granular
-	// time alone. Chess cannot safely treat two keys as one seat until the
-	// public API resolves at an exact log position: a later anchor or revocation
-	// may share a timestamp with an earlier move. Exact session-key ownership is
-	// safe in the meantime, and SchemaAnchor remains durable host vocabulary.
-	return seat != "" && seat == actor
+func (p *Projection) seatAt(record host.Record, game string) seat {
+	owner := seat{actor: record.Actor}
+	if resolved := p.identities.LookupAt(record.ID); resolved.Anchored && chessScope(resolved.Scope, game) {
+		owner.identity, owner.anchored = resolved.Identity, true
+	}
+	return owner
+}
+
+func (p *Projection) sameSeat(owner *seat, record host.Record, game string) bool {
+	if owner == nil || owner.actor == "" {
+		return false
+	}
+	resolved := p.identities.LookupAt(record.ID)
+	if owner.anchored {
+		return resolved.Anchored && chessScope(resolved.Scope, game) && sameIdentity(resolved.Identity, owner.identity)
+	}
+	if record.Actor != owner.actor {
+		return false
+	}
+	// Playing first and anchoring later is the normal upgrade path. The exact
+	// seated key retains authority for this act and, when its anchor is in force
+	// at this record, carries the seat onto the persistent identity thereafter.
+	if resolved.Anchored && chessScope(resolved.Scope, game) {
+		owner.identity, owner.anchored = resolved.Identity, true
+	}
+	return true
+}
+
+func chessScope(scope, game string) bool {
+	return scope == "chess" || scope == "chess:"+game
+}
+
+func sameIdentity(left, right identity.Identity) bool {
+	// Handle is display text and may change between otherwise equivalent
+	// endorsements. The host identity contract defines sameness by provider
+	// scheme and stable subject only.
+	return left.Scheme == right.Scheme && left.Subject == right.Subject
 }
 
 // LegalDestinations returns the fold engine's legal destinations from one

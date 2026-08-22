@@ -15,6 +15,7 @@ import (
 
 	chess "github.com/generalbusiness-ai/gitseq-chess"
 	"github.com/generalbusiness-ai/gitseq/host"
+	"github.com/generalbusiness-ai/gitseq/host/identity"
 )
 
 const (
@@ -258,6 +259,234 @@ func TestSharedAnchorVocabularyIsOpaqueAndNonDisruptiveToChess(t *testing.T) {
 	}
 }
 
+func TestAnchoredSeatRecoveryUsesExactRecordOrder(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "recovery-repo")
+	if output, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	whiteKey, blackKey, recoveryKey := key(t), key(t), key(t)
+	witnessPublic, witnessKey := keyPair(t)
+	workspace, err := host.Init(ctx, repo, chess.Application, whiteKey, host.Options{PayloadCeiling: 16 << 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.DeclareWitness(ctx, workspace, whiteKey, witnessPublic, []string{identity.GitHubScheme}); err != nil {
+		t.Fatal(err)
+	}
+	probe, err := workspace.Append(ctx, recoveryKey, host.Act{Schema: "test/recovery-key@0", Payload: []byte(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := identity.Identity{Scheme: identity.GitHubScheme, Subject: "4242", Handle: "alice"}
+	if _, err := identity.Endorse(ctx, workspace, witnessKey, identity.Anchor{
+		Subject: actorOf(whiteKey), Identity: &alice, Scope: "chess",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := chess.Create(ctx, workspace, whiteKey, "white", "", "", "recovery-create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined, err := chess.Join(ctx, workspace, blackKey, created.ID, "", "recovery-join")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The recovered key first acts without authority, then receives a scoped
+	// delegation and acts again. All timestamps are tied below while retaining
+	// the real host-generated record identifiers, actors and identity payloads.
+	beforeAnchor, err := chess.Move(ctx, workspace, recoveryKey, created.ID, "e2e4", "before-anchor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A provider handle is display text, not identity. Re-anchoring the seated
+	// key with an updated handle must not split Alice into two seat owners.
+	alice.Handle = "alice-now"
+	if _, err := identity.Endorse(ctx, workspace, witnessKey, identity.Anchor{
+		Subject: created.Actor, Identity: &alice, Scope: "chess",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := identity.Endorse(ctx, workspace, whiteKey, identity.Anchor{
+		Subject: probe.Actor, Scope: "chess:" + created.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterAnchor, err := chess.Move(ctx, workspace, recoveryKey, created.ID, "e2e4", "after-anchor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	blackMove, err := chess.Move(ctx, workspace, blackKey, created.ID, "e7e5", "black-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRevoke, err := chess.Move(ctx, workspace, recoveryKey, created.ID, "g1f3", "before-revoke")
+	if err != nil {
+		t.Fatal(err)
+	}
+	blackTwo, err := chess.Move(ctx, workspace, blackKey, created.ID, "b8c6", "black-two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.Revoke(ctx, workspace, whiteKey, credential.ID); err != nil {
+		t.Fatal(err)
+	}
+	afterRevoke, err := chess.Move(ctx, workspace, recoveryKey, created.ID, "f1b5", "after-revoke")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	log, err := workspace.Records(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range log.Records {
+		log.Records[index].Timestamp = 1_000
+	}
+	projection := chess.Fold(log)
+	game, ok := projection.GameByID(created.ID)
+	if !ok || game.Moves != 4 || game.LastMove != blackTwo.ID || game.LastMoveUCI != "b8c6" {
+		t.Fatalf("recovered game = %+v, want four moves ending at black's second move", game)
+	}
+	for _, want := range []string{beforeAnchor.ID, afterRevoke.ID} {
+		found := false
+		for _, refusal := range projection.Refused {
+			found = found || refusal.Record == want
+		}
+		if !found {
+			t.Fatalf("record %s was not refused at its exact identity position: %+v", want, projection.Refused)
+		}
+	}
+	for _, want := range []string{afterAnchor.ID, blackMove.ID, beforeRevoke.ID, blackTwo.ID, joined.ID} {
+		for _, refusal := range projection.Refused {
+			if refusal.Record == want {
+				t.Fatalf("record %s was retroactively refused by a same-second identity boundary: %+v", want, refusal)
+			}
+		}
+	}
+}
+
+func TestSeatCanUpgradeAfterPlayingUnanchored(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "late-anchor-repo")
+	if output, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	whiteKey, blackKey, recoveredKey := key(t), key(t), key(t)
+	witnessPublic, witnessKey := keyPair(t)
+	workspace, err := host.Init(ctx, repo, chess.Application, whiteKey, host.Options{PayloadCeiling: 16 << 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.DeclareWitness(ctx, workspace, whiteKey, witnessPublic, []string{identity.GitHubScheme}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := chess.Create(ctx, workspace, whiteKey, "white", "", "", "late-create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chess.Join(ctx, workspace, blackKey, created.ID, "", "late-join"); err != nil {
+		t.Fatal(err)
+	}
+	alice := identity.Identity{Scheme: identity.GitHubScheme, Subject: "4242"}
+	if _, err := identity.Endorse(ctx, workspace, witnessKey, identity.Anchor{
+		Subject: created.Actor, Identity: &alice, Scope: "chess",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The exact seated key remains valid for its first post-anchor move; that
+	// move upgrades the seat to Alice's persistent identity.
+	if _, err := chess.Move(ctx, workspace, whiteKey, created.ID, "e2e4", "late-white"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chess.Move(ctx, workspace, blackKey, created.ID, "e7e5", "late-black"); err != nil {
+		t.Fatal(err)
+	}
+	probe, err := workspace.Append(ctx, recoveredKey, host.Act{Schema: "test/recovered@0", Payload: []byte(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.Endorse(ctx, workspace, whiteKey, identity.Anchor{Subject: probe.Actor, Scope: "chess"}); err != nil {
+		t.Fatal(err)
+	}
+	move, err := chess.Move(ctx, workspace, recoveredKey, created.ID, "g1f3", "late-recovered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	log, err := workspace.Records(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection := chess.Fold(log)
+	game, _ := projection.GameByID(created.ID)
+	if game.Moves != 3 || game.LastMove != move.ID || projection.RefusedTotal != 0 {
+		t.Fatalf("late anchor recovery = game %+v refusals %+v", game, projection.Refused)
+	}
+}
+
+func TestExpiredOrWrongScopeAnchorCannotRecoverASeat(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "bounded-anchor-repo")
+	if output, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	whiteKey, blackKey, expiredKey, watcherKey := key(t), key(t), key(t), key(t)
+	witnessPublic, witnessKey := keyPair(t)
+	workspace, err := host.Init(ctx, repo, chess.Application, whiteKey, host.Options{PayloadCeiling: 16 << 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.DeclareWitness(ctx, workspace, whiteKey, witnessPublic, []string{identity.GitHubScheme}); err != nil {
+		t.Fatal(err)
+	}
+	alice := identity.Identity{Scheme: identity.GitHubScheme, Subject: "4242"}
+	if _, err := identity.Endorse(ctx, workspace, witnessKey, identity.Anchor{
+		Subject: actorOf(whiteKey), Identity: &alice, Scope: "chess",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := chess.Create(ctx, workspace, whiteKey, "white", "", "", "bounded-create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chess.Join(ctx, workspace, blackKey, created.ID, "", "bounded-join"); err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range []struct {
+		key      ed25519.PrivateKey
+		scope    string
+		notAfter int64
+		move     string
+	}{
+		{expiredKey, "chess", 1, "e2e4"},
+		{watcherKey, "watch", 0, "d2d4"},
+	} {
+		probe, err := workspace.Append(ctx, candidate.key, host.Act{Schema: "test/candidate@0", Payload: []byte(`{}`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := identity.Endorse(ctx, workspace, whiteKey, identity.Anchor{
+			Subject: probe.Actor, Scope: candidate.scope, NotAfter: candidate.notAfter,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := chess.Move(ctx, workspace, candidate.key, created.ID, candidate.move, "bounded-"+candidate.scope); err != nil {
+			t.Fatal(err)
+		}
+	}
+	log, err := workspace.Records(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection := chess.Fold(log)
+	game, _ := projection.GameByID(created.ID)
+	if game.Moves != 0 || projection.RefusedTotal != 2 {
+		t.Fatalf("bounded recovery = game %+v refusals %+v", game, projection.Refused)
+	}
+}
+
 func TestGamesPageIsBoundedAndStable(t *testing.T) {
 	b := &logBuilder{}
 	for index := range 105 {
@@ -331,9 +560,20 @@ func TestPublicActionsRunAgainstARealGitseqRepository(t *testing.T) {
 
 func key(t *testing.T) ed25519.PrivateKey {
 	t.Helper()
-	_, private, err := ed25519.GenerateKey(rand.Reader)
+	_, private := keyPair(t)
+	return private
+}
+
+func keyPair(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey) {
+	t.Helper()
+	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return private
+	return public, private
+}
+
+func actorOf(private ed25519.PrivateKey) string {
+	digest := sha256.Sum256(private.Public().(ed25519.PublicKey))
+	return hex.EncodeToString(digest[:])
 }

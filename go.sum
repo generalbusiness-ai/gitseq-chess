@@ -1,8 +1,8 @@
 github.com/ajstarks/svgo v0.0.0-20200320125537-f189e35d30ca/go.mod h1:K08gAheRH3/J6wwsYMMT4xOr94bZjxIelGM0+d/wbFw=
 github.com/fxamacker/cbor/v2 v2.9.1 h1:2rWm8B193Ll4VdjsJY28jxs70IdDsHRWgQYAI80+rMQ=
 github.com/fxamacker/cbor/v2 v2.9.1/go.mod h1:vM4b+DJCtHn+zz7h3FFp/hDAI9WNWCsZj23V5ytsSxQ=
-github.com/generalbusiness-ai/gitseq v0.0.0-20260822130102-7e7b8412bcd9 h1:R4sURZjZnYZEerJTTcs7O6IYpQxrsXfiLVbkvGZX5aM=
-github.com/generalbusiness-ai/gitseq v0.0.0-20260822130102-7e7b8412bcd9/go.mod h1:LCuYmgEqgnLR+QG0nUftnm97gOlPsfMFoDD4nmn17cc=
+github.com/generalbusiness-ai/gitseq v0.0.0-20260822221118-dea7c0a84796 h1:65TiEWu1RDM4Pqlx9eazI6LsIqEjD5wer21yimF13Aw=
+github.com/generalbusiness-ai/gitseq v0.0.0-20260822221118-dea7c0a84796/go.mod h1:LCuYmgEqgnLR+QG0nUftnm97gOlPsfMFoDD4nmn17cc=
 github.com/notnil/chess v1.10.0 h1:RR3MgS9G6zZmJ+VPTJolyxdaIgxoUPyUUY+2iaw35G0=
 github.com/notnil/chess v1.10.0/go.mod h1:cRuJUIBFq9Xki05TWHJxHYkC+fFpq45IWwk94DdlCrA=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
