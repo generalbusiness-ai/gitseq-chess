@@ -17,7 +17,15 @@ import (
 	application "github.com/generalbusiness-ai/gitseq-chess"
 )
 
+func requireWritableKeyCustody(t *testing.T) {
+	t.Helper()
+	if err := requireKeyCustodyPlatform(); err != nil {
+		t.Skip(err)
+	}
+}
+
 func TestCommandsInitializeAndPlayThroughThePublicHost(t *testing.T) {
+	requireWritableKeyCustody(t)
 	ctx := context.Background()
 	repo := filepath.Join(t.TempDir(), "data")
 	call := func(arguments ...string) map[string]any {
@@ -132,7 +140,46 @@ func TestMCPInitializeAndListsTheWholeDurableAndQuerySurface(t *testing.T) {
 	}
 }
 
+func TestReadOnlySurfacesDoNotRequireKeyCustody(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "missing-repository")
+
+	err := run(ctx, []string{"board", "--repo", repo, "--game", "missing"}, io.Discard, bytes.NewReader(nil))
+	if err == nil || strings.Contains(err.Error(), "player-key custody") {
+		t.Fatalf("board error = %v", err)
+	}
+
+	params, err := json.Marshal(callParams{Name: "list_games", Arguments: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, respond := handleRPC(ctx, &commonFlags{repo: repo}, rpcRequest{
+		JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "tools/call", Params: params,
+	})
+	if !respond || response.Error != nil {
+		t.Fatalf("list_games = %+v, respond %v", response, respond)
+	}
+	encoded, err := json.Marshal(response.Result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"isError":true`) ||
+		strings.Contains(string(encoded), "player-key custody") {
+		t.Fatalf("list_games result = %s", encoded)
+	}
+
+	handler := newReadHandler(ctx, repo)
+	request := httptest.NewRequest(http.MethodGet, "/v1/games", nil)
+	httpResponse := httptest.NewRecorder()
+	handler.ServeHTTP(httpResponse, request)
+	if httpResponse.Code != http.StatusServiceUnavailable ||
+		httpResponse.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("read service status %d headers %v", httpResponse.Code, httpResponse.Header())
+	}
+}
+
 func TestMCPToolsCallEveryActAndBoundedQueries(t *testing.T) {
+	requireWritableKeyCustody(t)
 	ctx := context.Background()
 	repo := filepath.Join(t.TempDir(), "data")
 	var discarded bytes.Buffer
@@ -226,45 +273,63 @@ func TestMCPToolsCallEveryActAndBoundedQueries(t *testing.T) {
 
 func TestMCPToolArgumentsCannotSilentlyWidenAnInvitation(t *testing.T) {
 	ctx := context.Background()
-	repo := filepath.Join(t.TempDir(), "data")
-	if err := run(ctx, []string{"init", "--repo", repo}, io.Discard, bytes.NewReader(nil)); err != nil {
-		t.Fatal(err)
-	}
-	common := &commonFlags{repo: repo}
-	for name, arguments := range map[string]string{
-		"wrong type":          `{"color":"white","invite_key":42}`,
-		"unknown field":       `{"color":"white","invited_key":"someone"}`,
-		"wrong secret":        `{"color":"white","join_secret":false}`,
-		"invalid fingerprint": `{"color":"white","invite_key":"someone"}`,
-		"null arguments":      `null`,
-	} {
-		params, err := json.Marshal(callParams{Name: "create", Arguments: json.RawMessage(arguments)})
+	t.Run("read tool schema", func(t *testing.T) {
+		showArgs, err := json.Marshal(callParams{
+			Name: "show_board", Arguments: json.RawMessage(`{"game":"missing","from":"e2"}`),
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		response, _ := handleRPC(ctx, common, rpcRequest{JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "tools/call", Params: params})
+		response, _ := handleRPC(ctx, &commonFlags{}, rpcRequest{
+			JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "tools/call", Params: showArgs,
+		})
 		result, ok := response.Result.(map[string]any)
 		if !ok || result["isError"] != true {
-			t.Errorf("%s arguments produced %+v, want tool error", name, response)
+			t.Fatalf("show_board accepted legal_destinations-only field: %+v", response)
 		}
-	}
-	_, projection, err := application.OpenProjection(ctx, repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(projection.Games) != 0 {
-		t.Fatalf("malformed MCP arguments created %d open games", len(projection.Games))
-	}
+		encoded, err := json.Marshal(result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(encoded), "player-key custody") {
+			t.Fatalf("read tool schema crossed the custody boundary: %s", encoded)
+		}
+	})
 
-	showArgs, err := json.Marshal(callParams{Name: "show_board", Arguments: json.RawMessage(`{"game":"missing","from":"e2"}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	showResponse, _ := handleRPC(ctx, common, rpcRequest{JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "tools/call", Params: showArgs})
-	showResult, ok := showResponse.Result.(map[string]any)
-	if !ok || showResult["isError"] != true {
-		t.Fatalf("show_board accepted legal_destinations-only field: %+v", showResponse)
-	}
+	t.Run("write tool schema", func(t *testing.T) {
+		requireWritableKeyCustody(t)
+		repo := filepath.Join(t.TempDir(), "data")
+		if err := run(ctx, []string{"init", "--repo", repo}, io.Discard, bytes.NewReader(nil)); err != nil {
+			t.Fatal(err)
+		}
+		common := &commonFlags{repo: repo}
+		for name, arguments := range map[string]string{
+			"wrong type":          `{"color":"white","invite_key":42}`,
+			"unknown field":       `{"color":"white","invited_key":"someone"}`,
+			"wrong secret":        `{"color":"white","join_secret":false}`,
+			"invalid fingerprint": `{"color":"white","invite_key":"someone"}`,
+			"null arguments":      `null`,
+		} {
+			params, err := json.Marshal(callParams{Name: "create", Arguments: json.RawMessage(arguments)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, _ := handleRPC(ctx, common, rpcRequest{
+				JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "tools/call", Params: params,
+			})
+			result, ok := response.Result.(map[string]any)
+			if !ok || result["isError"] != true {
+				t.Errorf("%s arguments produced %+v, want tool error", name, response)
+			}
+		}
+		_, projection, err := application.OpenProjection(ctx, repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(projection.Games) != 0 {
+			t.Fatalf("malformed MCP arguments created %d open games", len(projection.Games))
+		}
+	})
 }
 
 func TestMCPStrictlyRefusesMalformedAndOversizedRequests(t *testing.T) {
@@ -297,6 +362,7 @@ func TestMCPStrictlyRefusesMalformedAndOversizedRequests(t *testing.T) {
 }
 
 func TestHTTPReadProjectionIsBoundedAndCarriesTheVerifiedHead(t *testing.T) {
+	requireWritableKeyCustody(t)
 	ctx := context.Background()
 	repo := filepath.Join(t.TempDir(), "data")
 	var output bytes.Buffer

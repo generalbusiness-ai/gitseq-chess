@@ -1,4 +1,4 @@
-//go:build windows
+//go:build !(aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris)
 
 package main
 
@@ -10,14 +10,16 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
-func requireWindowsCustodyRefusal(t *testing.T, err error) {
+func requireUnsupportedCustodyRefusal(t *testing.T, err error) {
 	t.Helper()
-	if err == nil || !strings.Contains(err.Error(), "player-key custody is unsupported on windows") {
-		t.Fatalf("custody error = %v", err)
+	want := "player-key custody is unsupported on " + runtime.GOOS
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("custody error = %v, want %q", err, want)
 	}
 }
 
@@ -28,20 +30,20 @@ func requireAbsent(t *testing.T, path string) {
 	}
 }
 
-func TestWindowsPlayerKeyCustodyFailsClosedBeforeState(t *testing.T) {
+func TestUnsupportedPlatformPlayerKeyCustodyFailsClosedBeforeState(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("init", func(t *testing.T) {
 		repo := filepath.Join(t.TempDir(), "new-repository")
 		err := run(ctx, []string{"init", "--repo", repo}, io.Discard, strings.NewReader(""))
-		requireWindowsCustodyRefusal(t, err)
+		requireUnsupportedCustodyRefusal(t, err)
 		requireAbsent(t, repo)
 	})
 
 	t.Run("managed storage", func(t *testing.T) {
 		repo := t.TempDir()
 		_, err := openKeyStore(ctx, "", repo, false)
-		requireWindowsCustodyRefusal(t, err)
+		requireUnsupportedCustodyRefusal(t, err)
 		requireAbsent(t, filepath.Join(repo, "chess"))
 	})
 
@@ -71,7 +73,7 @@ func TestWindowsPlayerKeyCustodyFailsClosedBeforeState(t *testing.T) {
 		}
 		for _, operation := range operations {
 			t.Run(operation.name, func(t *testing.T) {
-				requireWindowsCustodyRefusal(t, operation.run())
+				requireUnsupportedCustodyRefusal(t, operation.run())
 				requireAbsent(t, filepath.Join(root, "player.key"))
 			})
 		}
@@ -82,7 +84,7 @@ func TestWindowsPlayerKeyCustodyFailsClosedBeforeState(t *testing.T) {
 		repo := filepath.Join(base, "repository")
 		key := filepath.Join(base, "player.key")
 		_, _, err := openWriter(ctx, &commonFlags{repo: repo, key: key})
-		requireWindowsCustodyRefusal(t, err)
+		requireUnsupportedCustodyRefusal(t, err)
 		requireAbsent(t, repo)
 		requireAbsent(t, key)
 	})
@@ -124,7 +126,7 @@ func TestWindowsPlayerKeyCustodyFailsClosedBeforeState(t *testing.T) {
 		if !ok || len(content) != 1 {
 			t.Fatalf("tools/call content = %#v", result["content"])
 		}
-		requireWindowsCustodyRefusal(t, errors.New(content[0]["text"]))
+		requireUnsupportedCustodyRefusal(t, errors.New(content[0]["text"]))
 		requireAbsent(t, repo)
 		requireAbsent(t, key)
 	})
