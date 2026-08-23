@@ -72,6 +72,9 @@ func runInit(ctx context.Context, args []string, stdout io.Writer) error {
 	if err := parseNoPositionals(set, args); err != nil {
 		return err
 	}
+	if err := requireKeyCustodyPlatform(); err != nil {
+		return err
+	}
 	if output, err := exec.CommandContext(ctx, "git", "init", "-q", *repo).CombinedOutput(); err != nil {
 		return fmt.Errorf("initialize Git repository: %w: %s", err, strings.TrimSpace(string(output)))
 	}
@@ -113,6 +116,9 @@ func addCommon(set *flag.FlagSet, write bool) *commonFlags {
 }
 
 func openWriter(ctx context.Context, flags *commonFlags) (*host.Workspace, ed25519.PrivateKey, error) {
+	if err := requireKeyCustodyPlatform(); err != nil {
+		return nil, nil, err
+	}
 	workspace, err := host.Open(ctx, flags.repo, application.Application)
 	if err != nil {
 		return nil, nil, err
@@ -688,6 +694,9 @@ type keyStore struct {
 // bounded only by its own parent: they chose where it lives, and the checks
 // that remain are the ones protecting the key file, not its location.
 func openKeyStore(ctx context.Context, path, repo string, named bool) (*keyStore, error) {
+	if err := requireKeyCustodyPlatform(); err != nil {
+		return nil, err
+	}
 	if named && path == "" {
 		return nil, errors.New("key path is required")
 	}
@@ -799,6 +808,9 @@ func (s *keyStore) path() string { return filepath.Join(s.root.Name(), s.name) }
 
 // ensureKey loads the player key, or publishes a new one.
 func ensureKey(store *keyStore) (ed25519.PrivateKey, error) {
+	if err := requireKeyCustodyPlatform(); err != nil {
+		return nil, err
+	}
 	private, err := readKey(store)
 	if err == nil {
 		return private, nil
@@ -826,6 +838,9 @@ func ensureKey(store *keyStore) (ed25519.PrivateKey, error) {
 // readKey reads an existing 0400 or 0600 key, refusing one reached through a
 // symbolic link or carrying any other mode.
 func readKey(store *keyStore) (ed25519.PrivateKey, error) {
+	if err := requireKeyCustodyPlatform(); err != nil {
+		return nil, err
+	}
 	// os.Root follows a link that stays inside the root, so the refusal is
 	// made here: ask what the name is, open it, and then prove the thing
 	// opened is the thing asked about. A swap between the two answers makes
@@ -841,6 +856,9 @@ func readKey(store *keyStore) (ed25519.PrivateKey, error) {
 // gave. It is separate so a test can hold that answer, replace what the name
 // refers to, and prove the mismatch is refused.
 func readNamedKey(store *keyStore, named os.FileInfo) (ed25519.PrivateKey, error) {
+	if err := requireKeyCustodyPlatform(); err != nil {
+		return nil, err
+	}
 	if named.Mode()&os.ModeSymlink != 0 {
 		return nil, fmt.Errorf("%s is a symbolic link; refusing to follow it to a private key", store.path())
 	}
@@ -876,6 +894,9 @@ func readNamedKey(store *keyStore, named os.FileInfo) (ed25519.PrivateKey, error
 // replacing an existing file, so a concurrent publisher cannot be overwritten
 // and the loser can simply read the winner's key.
 func publishKey(store *keyStore, private ed25519.PrivateKey) (err error) {
+	if err := requireKeyCustodyPlatform(); err != nil {
+		return err
+	}
 	var suffix [8]byte
 	if _, err := rand.Read(suffix[:]); err != nil {
 		return fmt.Errorf("create player key: %w", err)

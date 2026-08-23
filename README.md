@@ -84,7 +84,8 @@ ordinary POSIX permissions. It does not protect against another process running
 as the same account or against an administrator. The custody checks are defined
 for POSIX filesystems. On an unsupported platform where the descriptor and mode
 guarantees are unavailable, the command fails closed instead of weakening
-them.
+them. This fail-closed rule covers both managed storage and explicit `--key`
+paths.
 
 `--key` names a different file, and that is an escape hatch with a boundary
 worth stating plainly. Choosing the location, and everything above the file's
