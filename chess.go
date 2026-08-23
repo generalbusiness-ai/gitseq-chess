@@ -542,8 +542,7 @@ func matchSeat(owner, other seat, record host.Record, resolved identity.Resolved
 	}
 	if owner.anchored {
 		return seatMatch{
-			matched:   resolved.Anchored && chessScope(resolved.Scope, game) && sameIdentity(resolved.Identity, owner.identity),
-			collision: other.anchored && sameIdentity(owner.identity, other.identity),
+			matched: resolved.Anchored && chessScope(resolved.Scope, game) && sameIdentity(resolved.Identity, owner.identity),
 		}
 	}
 	if record.Actor != owner.actor {

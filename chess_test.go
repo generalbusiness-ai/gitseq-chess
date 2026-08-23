@@ -78,6 +78,22 @@ func TestFoldSeatsTheFirstQualifiedJoinAndRefusesTheRest(t *testing.T) {
 	}
 }
 
+func TestCreatorCannotTakeBothSeats(t *testing.T) {
+	b := &logBuilder{}
+	b.add("game", white, chess.SchemaCreate, chess.CreatePayload{CreatorColor: "white"})
+	b.add("self-join", white, chess.SchemaJoin, chess.JoinPayload{Game: "game"}, "game")
+
+	projection := b.fold()
+	game, ok := projection.GameByID("game")
+	if !ok || game.Status != "open" || game.Black != "" {
+		t.Fatalf("self-joined game = %+v, want the opposing seat open", game)
+	}
+	if projection.RefusedTotal != 1 || projection.Refused[0].Record != "self-join" ||
+		projection.Refused[0].Reason != "creator cannot take both seats" {
+		t.Fatalf("self-join refusals = %+v", projection.Refused)
+	}
+}
+
 func TestInvitationByKeyAndSecretAreEnforced(t *testing.T) {
 	digest := sha256.Sum256([]byte("correct horse"))
 	b := &logBuilder{}
