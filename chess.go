@@ -260,12 +260,21 @@ func (p *Projection) foldJoin(record host.Record) {
 			}
 		}
 	}
+	joining := p.seatAt(record, game.ID)
 	if game.White == "" {
+		if sameAnchoredSeat(joining, game.blackSeat) {
+			p.refuse(record, body.Game, "one persistent identity cannot hold both seats")
+			return
+		}
 		game.White = record.Actor
-		game.whiteSeat = p.seatAt(record, game.ID)
+		game.whiteSeat = joining
 	} else {
+		if sameAnchoredSeat(joining, game.whiteSeat) {
+			p.refuse(record, body.Game, "one persistent identity cannot hold both seats")
+			return
+		}
 		game.Black = record.Actor
-		game.blackSeat = p.seatAt(record, game.ID)
+		game.blackSeat = joining
 	}
 	game.join = record.ID
 	game.LastMove = record.ID
@@ -292,11 +301,12 @@ func (p *Projection) foldMove(record host.Record) {
 		p.refuse(record, body.Game, "move does not continue the accepted move chain")
 		return
 	}
-	want := &game.whiteSeat
+	side := "white"
 	if game.engine.Position().Turn() == rules.Black {
-		want = &game.blackSeat
+		side = "black"
 	}
-	if !p.sameSeat(want, record, game.ID) {
+	matched := p.seatSide(game, record)
+	if !matched.allowed() || matched.side != side {
 		p.refuse(record, body.Game, "actor does not hold the side to move")
 		return
 	}
@@ -308,8 +318,9 @@ func (p *Projection) foldMove(record host.Record) {
 		p.refuse(record, body.Game, "move is illegal in the current position")
 		return
 	}
+	matched.commit()
 	// Moving instead of accepting is a refusal of the other player's offer.
-	if game.DrawOffer != "" && p.seatSide(game, record) != game.offeredBy {
+	if game.DrawOffer != "" && side != game.offeredBy {
 		game.DrawOffer, game.OfferedBy = "", ""
 		game.offeredBy = ""
 	}
@@ -334,13 +345,14 @@ func (p *Projection) foldResign(record host.Record) {
 		p.refuse(record, body.Game, "resignation does not name the current move chain")
 		return
 	}
-	side := p.seatSide(game, record)
-	if side == "" {
+	matched := p.seatSide(game, record)
+	if !matched.allowed() {
 		p.refuse(record, body.Game, "actor holds no seat")
 		return
 	}
+	matched.commit()
 	game.Status, game.Method = "finished", "resignation"
-	if side == "white" {
+	if matched.side == "white" {
 		game.Outcome = "black-wins"
 	} else {
 		game.Outcome = "white-wins"
@@ -362,8 +374,8 @@ func (p *Projection) foldDrawOffer(record host.Record) {
 		p.refuse(record, body.Game, "draw offer does not name the current move chain")
 		return
 	}
-	side := p.seatSide(game, record)
-	if side == "" {
+	matched := p.seatSide(game, record)
+	if !matched.allowed() {
 		p.refuse(record, body.Game, "actor holds no seat")
 		return
 	}
@@ -371,8 +383,9 @@ func (p *Projection) foldDrawOffer(record host.Record) {
 		p.refuse(record, body.Game, "a draw offer is already pending")
 		return
 	}
+	matched.commit()
 	game.DrawOffer, game.OfferedBy = record.ID, record.Actor
-	game.offeredBy = side
+	game.offeredBy = matched.side
 }
 
 func (p *Projection) foldDrawAccept(record host.Record) {
@@ -390,11 +403,12 @@ func (p *Projection) foldDrawAccept(record host.Record) {
 		p.refuse(record, body.Game, "draw acceptance does not answer the pending offer")
 		return
 	}
-	side := p.seatSide(game, record)
-	if side == "" || side == game.offeredBy {
+	matched := p.seatSide(game, record)
+	if !matched.allowed() || matched.side == game.offeredBy {
 		p.refuse(record, body.Game, "only the other seated player may accept the draw")
 		return
 	}
+	matched.commit()
 	game.Status, game.Outcome, game.Method = "finished", "draw", "agreement"
 }
 
@@ -472,16 +486,40 @@ func validActorFingerprint(value string) bool {
 	return err == nil && len(raw) == sha256.Size && value == strings.ToLower(value)
 }
 
-func (p *Projection) seatSide(game *Game, record host.Record) string {
-	white := p.sameSeat(&game.whiteSeat, record, game.ID)
-	black := p.sameSeat(&game.blackSeat, record, game.ID)
-	if white && !black {
-		return "white"
+type seatMatch struct {
+	matched   bool
+	collision bool
+	upgrade   *identity.Identity
+}
+
+func (m seatMatch) allowed() bool { return m.matched && !m.collision }
+
+func (m seatMatch) commit(owner *seat) {
+	if owner == nil || m.upgrade == nil {
+		return
 	}
-	if black && !white {
-		return "black"
+	owner.identity, owner.anchored = *m.upgrade, true
+}
+
+type sideMatch struct {
+	seatMatch
+	side  string
+	owner *seat
+}
+
+func (m sideMatch) commit() { m.seatMatch.commit(m.owner) }
+
+func (p *Projection) seatSide(game *Game, record host.Record) sideMatch {
+	resolved := p.identities.LookupAt(record.ID)
+	white := matchSeat(game.whiteSeat, game.blackSeat, record, resolved, game.ID)
+	black := matchSeat(game.blackSeat, game.whiteSeat, record, resolved, game.ID)
+	if white.collision || black.collision || white.matched == black.matched {
+		return sideMatch{}
 	}
-	return ""
+	if white.matched {
+		return sideMatch{seatMatch: white, side: "white", owner: &game.whiteSeat}
+	}
+	return sideMatch{seatMatch: black, side: "black", owner: &game.blackSeat}
 }
 
 func (p *Projection) seatAt(record host.Record, game string) seat {
@@ -492,24 +530,32 @@ func (p *Projection) seatAt(record host.Record, game string) seat {
 	return owner
 }
 
-func (p *Projection) sameSeat(owner *seat, record host.Record, game string) bool {
-	if owner == nil || owner.actor == "" {
-		return false
+func matchSeat(owner, other seat, record host.Record, resolved identity.Resolved, game string) seatMatch {
+	if owner.actor == "" {
+		return seatMatch{}
 	}
-	resolved := p.identities.LookupAt(record.ID)
+	// An exact seated key belongs to that seat even when its current identity
+	// resolution changes. It must never borrow the opposing seat merely because
+	// it now resolves to that seat's persistent identity.
+	if record.Actor == other.actor {
+		return seatMatch{}
+	}
 	if owner.anchored {
-		return resolved.Anchored && chessScope(resolved.Scope, game) && sameIdentity(resolved.Identity, owner.identity)
+		return seatMatch{
+			matched:   resolved.Anchored && chessScope(resolved.Scope, game) && sameIdentity(resolved.Identity, owner.identity),
+			collision: other.anchored && sameIdentity(owner.identity, other.identity),
+		}
 	}
 	if record.Actor != owner.actor {
-		return false
+		return seatMatch{}
 	}
-	// Playing first and anchoring later is the normal upgrade path. The exact
-	// seated key retains authority for this act and, when its anchor is in force
-	// at this record, carries the seat onto the persistent identity thereafter.
+	matched := seatMatch{matched: true}
 	if resolved.Anchored && chessScope(resolved.Scope, game) {
-		owner.identity, owner.anchored = resolved.Identity, true
+		matched.collision = other.anchored && sameIdentity(resolved.Identity, other.identity)
+		identity := resolved.Identity
+		matched.upgrade = &identity
 	}
-	return true
+	return matched
 }
 
 func chessScope(scope, game string) bool {
@@ -521,6 +567,10 @@ func sameIdentity(left, right identity.Identity) bool {
 	// endorsements. The host identity contract defines sameness by provider
 	// scheme and stable subject only.
 	return left.Scheme == right.Scheme && left.Subject == right.Subject
+}
+
+func sameAnchoredSeat(left, right seat) bool {
+	return left.anchored && right.anchored && sameIdentity(left.identity, right.identity)
 }
 
 // LegalDestinations returns the fold engine's legal destinations from one

@@ -487,6 +487,487 @@ func TestExpiredOrWrongScopeAnchorCannotRecoverASeat(t *testing.T) {
 	}
 }
 
+func TestSamePersistentIdentityCannotTakeBothSeats(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "identity-collision-repo")
+	if output, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	whiteKey, blackKey := key(t), key(t)
+	witnessPublic, witnessKey := keyPair(t)
+	workspace, err := host.Init(ctx, repo, chess.Application, whiteKey, host.Options{PayloadCeiling: 16 << 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.DeclareWitness(ctx, workspace, whiteKey, witnessPublic, []string{identity.GitHubScheme}); err != nil {
+		t.Fatal(err)
+	}
+	blackProbe, err := workspace.Append(ctx, blackKey, host.Act{Schema: "test/black-key@0", Payload: []byte(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := identity.Identity{Scheme: identity.GitHubScheme, Subject: "4242", Handle: "alice"}
+	for _, actor := range []string{actorOf(whiteKey), blackProbe.Actor} {
+		if _, err := identity.Endorse(ctx, workspace, witnessKey, identity.Anchor{
+			Subject: actor, Identity: &alice, Scope: "chess",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	created, err := chess.Create(ctx, workspace, whiteKey, "white", "", "", "collision-create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined, err := chess.Join(ctx, workspace, blackKey, created.ID, "", "collision-join")
+	if err != nil {
+		t.Fatal(err)
+	}
+	log, err := workspace.Records(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection := chess.Fold(log)
+	game, _ := projection.GameByID(created.ID)
+	if game.Status != "open" || game.Black != "" || game.LastMove != "" {
+		t.Fatalf("same-identity join occupied black: %+v", game)
+	}
+	if projection.RefusedTotal != 1 || projection.Refused[0].Record != joined.ID ||
+		projection.Refused[0].Reason != "one persistent identity cannot hold both seats" {
+		t.Fatalf("same-identity join refusals = %+v", projection.Refused)
+	}
+}
+
+// Mutation witness for the runtime guard: join collision is not enough when
+// two exact-key seats acquire the same persistent identity only after seating.
+func TestSecondSeatCannotUpgradeToTheFirstSeatsIdentity(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "late-collision-repo")
+	if output, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	whiteKey, blackKey := key(t), key(t)
+	witnessPublic, witnessKey := keyPair(t)
+	workspace, err := host.Init(ctx, repo, chess.Application, whiteKey, host.Options{PayloadCeiling: 16 << 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.DeclareWitness(ctx, workspace, whiteKey, witnessPublic, []string{identity.GitHubScheme}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := chess.Create(ctx, workspace, whiteKey, "white", "", "", "late-collision-create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined, err := chess.Join(ctx, workspace, blackKey, created.ID, "", "late-collision-join")
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := identity.Identity{Scheme: identity.GitHubScheme, Subject: "4242"}
+	for _, actor := range []string{created.Actor, joined.Actor} {
+		if _, err := identity.Endorse(ctx, workspace, witnessKey, identity.Anchor{
+			Subject: actor, Identity: &alice, Scope: "chess",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	whiteMove, err := chess.Move(ctx, workspace, whiteKey, created.ID, "e2e4", "late-collision-white")
+	if err != nil {
+		t.Fatal(err)
+	}
+	blackMove, err := chess.Move(ctx, workspace, blackKey, created.ID, "e7e5", "late-collision-black")
+	if err != nil {
+		t.Fatal(err)
+	}
+	log, err := workspace.Records(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection := chess.Fold(log)
+	game, _ := projection.GameByID(created.ID)
+	if game.Moves != 1 || game.LastMove != whiteMove.ID || game.LastMoveUCI != "e2e4" {
+		t.Fatalf("late identity collision moved both colors: %+v", game)
+	}
+	if projection.RefusedTotal != 1 || projection.Refused[0].Record != blackMove.ID {
+		t.Fatalf("late identity collision refusals = %+v", projection.Refused)
+	}
+}
+
+// Mutation witness for every act using the shared two-seat authority check:
+// an exact seated key cannot borrow the other seat's persistent identity while
+// its own identity resolves to the same owner.
+func TestExactSeatedKeyCannotBorrowTheOtherSeatsIdentity(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "cross-seat-collision-repo")
+	if output, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	whiteKey, blackKey := key(t), key(t)
+	witnessPublic, witnessKey := keyPair(t)
+	workspace, err := host.Init(ctx, repo, chess.Application, whiteKey, host.Options{PayloadCeiling: 16 << 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.DeclareWitness(ctx, workspace, whiteKey, witnessPublic, []string{identity.GitHubScheme}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := chess.Create(ctx, workspace, whiteKey, "white", "", "", "cross-seat-create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined, err := chess.Join(ctx, workspace, blackKey, created.ID, "", "cross-seat-join")
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := identity.Identity{Scheme: identity.GitHubScheme, Subject: "4242"}
+	if _, err := identity.Endorse(ctx, workspace, witnessKey, identity.Anchor{
+		Subject: actorOf(whiteKey), Identity: &alice, Scope: "chess",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	blackAnchor, err := identity.Endorse(ctx, workspace, witnessKey, identity.Anchor{
+		Subject: joined.Actor, Identity: &alice, Scope: "chess:" + created.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	whiteMove, err := chess.Move(ctx, workspace, whiteKey, created.ID, "e2e4", "cross-seat-white")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := func() chess.Projection {
+		t.Helper()
+		log, err := workspace.Records(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return chess.Fold(log)
+	}
+	projection := project()
+	game, _ := projection.GameByID(created.ID)
+	if game.Moves != 1 || game.LastMove != whiteMove.ID || game.LastMoveUCI != "e2e4" || projection.RefusedTotal != 0 {
+		t.Fatalf("white did not upgrade on its first effective act: game %+v refusals %+v", game, projection.Refused)
+	}
+	if _, err := identity.Revoke(ctx, workspace, witnessKey, blackAnchor.ID); err != nil {
+		t.Fatal(err)
+	}
+	blackMove, err := chess.Move(ctx, workspace, blackKey, created.ID, "e7e5", "cross-seat-black")
+	if err != nil {
+		t.Fatal(err)
+	}
+	drawOffer, err := chess.OfferDraw(ctx, workspace, blackKey, created.ID, "cross-seat-draw-offer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection = project()
+	game, _ = projection.GameByID(created.ID)
+	if game.Moves != 2 || game.LastMove != blackMove.ID || game.LastMoveUCI != "e7e5" ||
+		game.DrawOffer != drawOffer.ID || projection.RefusedTotal != 0 {
+		t.Fatalf("withdrawn black key did not act as its exact seat: game %+v refusals %+v", game, projection.Refused)
+	}
+	if _, err := identity.Endorse(ctx, workspace, witnessKey, identity.Anchor{
+		Subject: joined.Actor, Identity: &alice, Scope: "chess:" + created.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projection = project()
+	game, _ = projection.GameByID(created.ID)
+	if game.Moves != 2 || game.LastMove != blackMove.ID || game.DrawOffer != drawOffer.ID || projection.RefusedTotal != 0 {
+		t.Fatalf("re-anchoring changed the game before an act: game %+v refusals %+v", game, projection.Refused)
+	}
+	appendAttempt := func(schema string, body any, restsOn string) host.Record {
+		t.Helper()
+		payload, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		record, err := workspace.Append(ctx, blackKey, host.Act{
+			Schema: schema, Payload: payload, RestsOn: []string{restsOn},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return record
+	}
+	// Append against the accepted causal references directly so the witness
+	// remains stable even when a mutant incorrectly makes an earlier attempt
+	// effective and changes the convenience writers' projected references.
+	borrowedMove := appendAttempt(chess.SchemaMove, chess.MovePayload{Game: created.ID, Move: "g1f3"}, blackMove.ID)
+	borrowedResign := appendAttempt(chess.SchemaResign, chess.GamePayload{Game: created.ID}, blackMove.ID)
+	borrowedOffer := appendAttempt(chess.SchemaDrawOffer, chess.GamePayload{Game: created.ID}, blackMove.ID)
+	borrowedAccept := appendAttempt(chess.SchemaDrawAccept, chess.DrawAcceptPayload{Game: created.ID, Offer: drawOffer.ID}, drawOffer.ID)
+	projection = project()
+	game, _ = projection.GameByID(created.ID)
+	if game.Status != "playing" || game.Moves != 2 || game.LastMove != blackMove.ID ||
+		game.LastMoveUCI != "e7e5" || game.DrawOffer != drawOffer.ID {
+		t.Fatalf("other seat's exact key borrowed white: %+v", game)
+	}
+	wantRefused := []string{borrowedMove.ID, borrowedResign.ID, borrowedOffer.ID, borrowedAccept.ID}
+	if projection.RefusedTotal != len(wantRefused) || len(projection.Refused) != len(wantRefused) {
+		t.Fatalf("cross-seat collision refusals = %+v", projection.Refused)
+	}
+	for index, want := range wantRefused {
+		if projection.Refused[index].Record != want {
+			t.Fatalf("cross-seat collision refusal %d = %+v, want %s", index, projection.Refused[index], want)
+		}
+	}
+}
+
+// An opposing key remains the opposing key even after its own seat has
+// upgraded to one identity and the key later resolves to the other seat's
+// identity. Without the exact-key guard in matchSeat, identity matching alone
+// lets the black key recover white here.
+func TestOpposingExactKeyCannotRecoverAnAnchoredSeat(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "anchored-cross-seat-repo")
+	if output, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	whiteKey, blackKey := key(t), key(t)
+	witnessPublic, witnessKey := keyPair(t)
+	workspace, err := host.Init(ctx, repo, chess.Application, whiteKey, host.Options{PayloadCeiling: 16 << 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.DeclareWitness(ctx, workspace, whiteKey, witnessPublic, []string{identity.GitHubScheme}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := chess.Create(ctx, workspace, whiteKey, "white", "", "", "anchored-cross-create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined, err := chess.Join(ctx, workspace, blackKey, created.ID, "", "anchored-cross-join")
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := identity.Identity{Scheme: identity.GitHubScheme, Subject: "alice"}
+	bob := identity.Identity{Scheme: identity.GitHubScheme, Subject: "bob"}
+	if _, err := identity.Endorse(ctx, workspace, witnessKey, identity.Anchor{
+		Subject: created.Actor, Identity: &alice, Scope: "chess:" + created.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	blackAnchor, err := identity.Endorse(ctx, workspace, witnessKey, identity.Anchor{
+		Subject: joined.Actor, Identity: &bob, Scope: "chess:" + created.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chess.Move(ctx, workspace, whiteKey, created.ID, "e2e4", "anchored-cross-white"); err != nil {
+		t.Fatal(err)
+	}
+	blackMove, err := chess.Move(ctx, workspace, blackKey, created.ID, "e7e5", "anchored-cross-black")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.Revoke(ctx, workspace, witnessKey, blackAnchor.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.Endorse(ctx, workspace, witnessKey, identity.Anchor{
+		Subject: joined.Actor, Identity: &alice, Scope: "chess:" + created.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	borrowed, err := chess.Move(ctx, workspace, blackKey, created.ID, "g1f3", "anchored-cross-borrow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	log, err := workspace.Records(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection := chess.Fold(log)
+	game, _ := projection.GameByID(created.ID)
+	if game.Moves != 2 || game.LastMove != blackMove.ID || game.LastMoveUCI != "e7e5" {
+		t.Fatalf("opposing exact key recovered white: %+v", game)
+	}
+	if projection.RefusedTotal != 1 || len(projection.Refused) != 1 || projection.Refused[0].Record != borrowed.ID {
+		t.Fatalf("opposing exact-key refusals = %+v", projection.Refused)
+	}
+}
+
+// Mutation witness: committing the late identity upgrade inside the authority
+// check, before MoveStr accepts the move, lets the recovered key play e2e4.
+func TestIllegalMoveCannotUpgradeAnUnanchoredSeat(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "illegal-upgrade-repo")
+	if output, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	whiteKey, blackKey, recoveredKey := key(t), key(t), key(t)
+	witnessPublic, witnessKey := keyPair(t)
+	workspace, err := host.Init(ctx, repo, chess.Application, whiteKey, host.Options{PayloadCeiling: 16 << 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.DeclareWitness(ctx, workspace, whiteKey, witnessPublic, []string{identity.GitHubScheme}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := chess.Create(ctx, workspace, whiteKey, "white", "", "", "illegal-upgrade-create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chess.Join(ctx, workspace, blackKey, created.ID, "", "illegal-upgrade-join"); err != nil {
+		t.Fatal(err)
+	}
+	alice := identity.Identity{Scheme: identity.GitHubScheme, Subject: "4242"}
+	if _, err := identity.Endorse(ctx, workspace, witnessKey, identity.Anchor{
+		Subject: created.Actor, Identity: &alice, Scope: "chess",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	illegal, err := chess.Move(ctx, workspace, whiteKey, created.ID, "e2e5", "illegal-upgrade-attempt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe, err := workspace.Append(ctx, recoveredKey, host.Act{Schema: "test/recovered-key@0", Payload: []byte(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.Endorse(ctx, workspace, whiteKey, identity.Anchor{Subject: probe.Actor, Scope: "chess"}); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := chess.Move(ctx, workspace, recoveredKey, created.ID, "e2e4", "illegal-upgrade-recovered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	log, err := workspace.Records(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection := chess.Fold(log)
+	game, _ := projection.GameByID(created.ID)
+	if game.Moves != 0 || projection.RefusedTotal != 2 {
+		t.Fatalf("illegal upgrade changed authority: game %+v refusals %+v", game, projection.Refused)
+	}
+	if projection.Refused[0].Record != illegal.ID || projection.Refused[1].Record != recovered.ID {
+		t.Fatalf("illegal upgrade refusals = %+v", projection.Refused)
+	}
+}
+
+// Mutation witness for the draw path: a second pending offer reaches the seat
+// check but remains ineffective, so it cannot carry a later recovery key in.
+func TestRefusedDrawOfferCannotUpgradeAnUnanchoredSeat(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "draw-upgrade-repo")
+	if output, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	whiteKey, blackKey, recoveredKey := key(t), key(t), key(t)
+	witnessPublic, witnessKey := keyPair(t)
+	workspace, err := host.Init(ctx, repo, chess.Application, whiteKey, host.Options{PayloadCeiling: 16 << 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.DeclareWitness(ctx, workspace, whiteKey, witnessPublic, []string{identity.GitHubScheme}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := chess.Create(ctx, workspace, whiteKey, "white", "", "", "draw-upgrade-create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chess.Join(ctx, workspace, blackKey, created.ID, "", "draw-upgrade-join"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chess.OfferDraw(ctx, workspace, blackKey, created.ID, "draw-upgrade-pending"); err != nil {
+		t.Fatal(err)
+	}
+	alice := identity.Identity{Scheme: identity.GitHubScheme, Subject: "4242"}
+	if _, err := identity.Endorse(ctx, workspace, witnessKey, identity.Anchor{
+		Subject: created.Actor, Identity: &alice, Scope: "chess",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	refusedOffer, err := chess.OfferDraw(ctx, workspace, whiteKey, created.ID, "draw-upgrade-refused")
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe, err := workspace.Append(ctx, recoveredKey, host.Act{Schema: "test/draw-recovery-key@0", Payload: []byte(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.Endorse(ctx, workspace, whiteKey, identity.Anchor{Subject: probe.Actor, Scope: "chess"}); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := chess.Move(ctx, workspace, recoveredKey, created.ID, "e2e4", "draw-upgrade-recovered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	log, err := workspace.Records(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection := chess.Fold(log)
+	game, _ := projection.GameByID(created.ID)
+	if game.Moves != 0 || game.DrawOffer == "" || projection.RefusedTotal != 2 {
+		t.Fatalf("refused draw upgraded authority: game %+v refusals %+v", game, projection.Refused)
+	}
+	if projection.Refused[0].Record != refusedOffer.ID || projection.Refused[1].Record != recovered.ID {
+		t.Fatalf("draw upgrade refusals = %+v", projection.Refused)
+	}
+}
+
+// Mutation witness for draw acceptance: matching the offering seat is not an
+// effective acceptance and therefore cannot commit that seat's late upgrade.
+func TestRefusedDrawAcceptanceCannotUpgradeAnUnanchoredSeat(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "accept-upgrade-repo")
+	if output, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	whiteKey, blackKey, recoveredKey := key(t), key(t), key(t)
+	witnessPublic, witnessKey := keyPair(t)
+	workspace, err := host.Init(ctx, repo, chess.Application, whiteKey, host.Options{PayloadCeiling: 16 << 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.DeclareWitness(ctx, workspace, whiteKey, witnessPublic, []string{identity.GitHubScheme}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := chess.Create(ctx, workspace, whiteKey, "white", "", "", "accept-upgrade-create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chess.Join(ctx, workspace, blackKey, created.ID, "", "accept-upgrade-join"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chess.OfferDraw(ctx, workspace, whiteKey, created.ID, "accept-upgrade-offer"); err != nil {
+		t.Fatal(err)
+	}
+	alice := identity.Identity{Scheme: identity.GitHubScheme, Subject: "4242"}
+	if _, err := identity.Endorse(ctx, workspace, witnessKey, identity.Anchor{
+		Subject: created.Actor, Identity: &alice, Scope: "chess",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	refusedAcceptance, err := chess.AcceptDraw(ctx, workspace, whiteKey, created.ID, "accept-upgrade-refused")
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe, err := workspace.Append(ctx, recoveredKey, host.Act{Schema: "test/accept-recovery-key@0", Payload: []byte(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.Endorse(ctx, workspace, whiteKey, identity.Anchor{Subject: probe.Actor, Scope: "chess"}); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := chess.Move(ctx, workspace, recoveredKey, created.ID, "e2e4", "accept-upgrade-recovered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	log, err := workspace.Records(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection := chess.Fold(log)
+	game, _ := projection.GameByID(created.ID)
+	if game.Status != "playing" || game.Moves != 0 || game.DrawOffer == "" || projection.RefusedTotal != 2 {
+		t.Fatalf("refused acceptance upgraded authority: game %+v refusals %+v", game, projection.Refused)
+	}
+	if projection.Refused[0].Record != refusedAcceptance.ID || projection.Refused[1].Record != recovered.ID {
+		t.Fatalf("acceptance upgrade refusals = %+v", projection.Refused)
+	}
+}
+
 func TestGamesPageIsBoundedAndStable(t *testing.T) {
 	b := &logBuilder{}
 	for index := range 105 {

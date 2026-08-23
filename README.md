@@ -22,10 +22,7 @@ mkdir game-data
 ```
 
 `init` creates the repository's binding, sequencer key, and first local player
-key. The default player key is created under the Git common directory with mode
-`0600`; board, HTTP, and MCP responses never include key material. Hardening
-custody and validation for caller-selected key paths is tracked separately from
-the chess application semantics in this head.
+key. Board, HTTP, and MCP responses never include key material.
 
 Create a game with an open seat:
 
@@ -36,23 +33,69 @@ Create a game with an open seat:
 Or create a secret invitation. The log contains only the SHA-256 hash until the
 join is submitted; the returned link keeps the secret in its URL fragment.
 
+The secret is read from a file, or from standard input when the file is named
+`-`. There is no flag that carries the secret itself, because a command
+argument is visible in the process table to every account on the machine for as
+long as the command runs.
+
 ```sh
-./chess create --repo game-data --color white --join-secret 'shared-once'
+printf 'shared-once' > invitation.secret
+chmod 600 invitation.secret
+./chess create --repo game-data --color white --join-secret-file invitation.secret
 ```
+
+Naming a source that turns out to be empty is an error rather than an absent
+secret, so a mistyped path cannot quietly create an invitation anyone can
+accept. Omit the flag when an open seat is what you want.
 
 Use another key file for the opponent, then play in UCI notation:
 
 ```sh
-./chess join --repo game-data --key bob.key --game '<create-record>' --secret 'shared-once'
+./chess join --repo game-data --key bob.key --game '<create-record>' --secret-file invitation.secret
 ./chess move --repo game-data --game '<create-record>' --move e2e4
 ./chess move --repo game-data --key bob.key --game '<create-record>' --move e7e5
 ./chess board --repo game-data --game '<create-record>'
 ```
 
-A missing key file is created exclusively. Give each player or agent a
-different file. A command reports both the accepted record identifier and the
-fold's `effective` decision; illegal moves and lost join races remain in the
-history with a short refusal reason.
+Give each player or agent a different key file. A command reports both the
+accepted record identifier and the fold's `effective` decision; illegal moves
+and lost join races remain in the history with a short refusal reason.
+
+### Where the player key lives
+
+By default the key is `chess/player.key` beneath the repository's Git common
+directory, and it never leaves it. The directory is opened once and every name
+is resolved against that open directory, so a path component replaced while the
+command runs cannot redirect where the key is read or written. A symbolic link
+standing in for the key file or for the `chess` directory is refused outright,
+even one pointing back inside the same directory.
+
+A new key is published by writing it beside its destination and linking it into
+place, so the real name never holds a half-written key, and a second process
+racing to create the first key cannot overwrite the winner. The file is set to
+mode `0600` explicitly rather than left to the process umask. Existing keys
+are accepted only at owner-read-only `0400` or owner-read-write `0600`.
+The managed `chess` directory must not be writable by group or others. The
+temporary hard-link name is removed after publication; a cleanup failure is
+reported, including when another process won the publication race.
+
+This managed custody protects the private key from other local accounts under
+ordinary POSIX permissions. It does not protect against another process running
+as the same account or against an administrator. The custody checks are defined
+for POSIX filesystems. On an unsupported platform where the descriptor and mode
+guarantees are unavailable, the command fails closed instead of weakening
+them.
+
+`--key` names a different file, and that is an escape hatch with a boundary
+worth stating plainly. Choosing the location, and everything above the file's
+own parent directory, is yours: the program pins that parent and does not
+inspect the path that led to it, so ancestor symbolic links are your
+responsibility. The parent must already exist. What the program still refuses,
+wherever you put the file: a final component that is a symbolic link or is not
+a regular file, a file whose mode is not `0400` or `0600`, a file that
+changes identity between being named and being opened, and any publication that
+is not exclusive. The program pins the operator-chosen parent after opening it,
+but does not validate that parent's permissions.
 
 ## Read service and MCP
 
@@ -89,9 +132,11 @@ the chosen key; tool results contain only public record data and fold decisions.
   when one is in force at the exact create, join, or later act position;
   otherwise it belongs to the exact session key. A seated key may therefore
   play first and upgrade later, and another currently anchored key for that
-  identity can recover the seat. Anchor, delegation, revocation, and move
-  records that share one signed second still take force only in verified log
-  order. Expiry continues to use the record's signed timestamp.
+  identity can recover the seat. Only an effective chess act commits that
+  late upgrade, and one persistent identity cannot occupy both colors in a
+  game. Anchor, delegation, revocation, and move records that share one signed
+  second still take force only in verified log order. Expiry continues to use
+  the record's signed timestamp.
 
 Run `go test -count=1 ./...` for fold, mutation-witness, invitation, pagination,
 and real external-host integration coverage.
