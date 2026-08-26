@@ -1,1 +1,1 @@
-{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:d5aebce9df64ff958cfb5551ffe573903c5cf1a5","text":"Replaced the da1d7ae1 candidate for cmd/chess with the reviewed-repair candidate at 16073a1e7605aaa15cc902e2f6059f992dd98c0e."}
+{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:52bd9c7208d49c8caf36104982f2c3acf37130ae","text":"Replaced the da1d7ae1 candidate for go.mod with the reviewed-repair candidate at 16073a1e7605aaa15cc902e2f6059f992dd98c0e."}
