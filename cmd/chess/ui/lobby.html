@@ -29,7 +29,7 @@
         <a class="game-card" href="/game?game={{urlquery .ID}}">
           <span class="game-state {{.Status}}">{{.Status}}</span>
           <strong>{{if .Name}}{{.Name}}{{else}}New game{{end}}</strong>
-          <span>{{if .White}}White seated{{else}}White open{{end}} · {{if .Black}}Black seated{{else}}Black open{{end}}</span>
+          <span>{{if .White}}White seated{{else if .AdmissionOpen}}White open{{else}}White restricted{{end}} · {{if .Black}}Black seated{{else if .AdmissionOpen}}Black open{{else}}Black restricted{{end}}</span>
           {{if .LastMoveUCI}}<span>Last move <code>{{.LastMoveUCI}}</code></span>{{end}}
           <code title="{{.ID}}">{{.ID}}</code>
         </a>

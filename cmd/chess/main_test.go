@@ -522,6 +522,26 @@ func TestEmbeddedUIRendersTheExactFoldedPositionAndSeats(t *testing.T) {
 			t.Errorf("lobby still contains retired copy %q", forbidden)
 		}
 	}
+	cardFor := func(game string) string {
+		t.Helper()
+		start := strings.Index(lobby, `href="/game?game=`+url.QueryEscape(game)+`"`)
+		if start < 0 {
+			t.Fatalf("lobby does not contain card for %s", game)
+		}
+		end := strings.Index(lobby[start:], "</a>")
+		if end < 0 {
+			t.Fatalf("lobby card for %s has no end", game)
+		}
+		return lobby[start : start+end]
+	}
+	if card := cardFor(openID); !strings.Contains(card, "White seated · Black open") || strings.Contains(card, "Black restricted") {
+		t.Errorf("open-game card has wrong admission copy: %s", card)
+	}
+	for _, restrictedID := range []string{secretID, inviteID} {
+		if card := cardFor(restrictedID); !strings.Contains(card, "White seated · Black restricted") || strings.Contains(card, "Black open") {
+			t.Errorf("restricted-game card %s has wrong admission copy: %s", restrictedID, card)
+		}
+	}
 	if csp := lobbyResponse.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") || strings.Contains(csp, "unsafe-inline") {
 		t.Errorf("Content-Security-Policy = %q", csp)
 	}
