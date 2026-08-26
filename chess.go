@@ -305,10 +305,7 @@ func (p *Projection) foldMove(record host.Record) {
 		p.refuse(record, body.Game, "move does not continue the accepted move chain")
 		return
 	}
-	side := "white"
-	if game.engine.Position().Turn() == rules.Black {
-		side = "black"
-	}
+	side := SideToMove(*game)
 	matched := p.seatSide(game, record.Actor, p.identities.LookupAt(record.ID))
 	if !matched.allowed() || matched.side != side {
 		p.refuse(record, body.Game, "actor does not hold the side to move")
