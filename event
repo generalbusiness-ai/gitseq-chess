@@ -1,1 +1,1 @@
-{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:3e581ac7eba3c7257585d7aef107c5a0c7380a30"}
+{"kind":"promise","text":"Promised: implement the chess SeatFor and adapter delegation child inside request/item5-chess-ui exactly as ruled, preserving the fold as sole authority interpreter and adding mutation-sensitive equivalence tests. This work is waiting on core identity head f42bcc2e to receive ratified independent approval, merge to core main, and become available for the chess dependency bump; no authority-boundary edit will proceed before that gate."}
