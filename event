@@ -1,1 +1,1 @@
-{"kind":"artifact","text":"At the exact test-guard successor head, web projections still expose only AdmissionOpen and exclude private invitation material. The successor changes only server regression tests.","body":{"commit":"b9483eaad39d27bc2747f5e8ec0c1501d03e4e2f","path":"cmd/chess/web.go"}}
+{"kind":"artifact","text":"At the exact test-guard successor head, the reviewed browser client behavior is unchanged. The successor changes only server regression tests.","body":{"commit":"b9483eaad39d27bc2747f5e8ec0c1501d03e4e2f","path":"cmd/chess/ui/app.js"}}
