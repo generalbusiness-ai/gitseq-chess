@@ -1,1 +1,1 @@
-{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:c0170be6d0c83936ebd6c2db5daa0c55ea990c78","text":"Replace the stale-born first 16073a1e artifact for cmd/chess with its fresh current-basis artifact at the same exact head."}
+{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:efd773451bc5341bb748afd6d30986871b3e2851","text":"Replace the stale-born first 16073a1e artifact for go.mod with its fresh current-basis artifact at the same exact head."}
