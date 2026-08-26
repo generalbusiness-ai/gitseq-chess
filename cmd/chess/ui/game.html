@@ -72,7 +72,7 @@
     <form method="dialog"><button class="dialog-close" aria-label="Close help">×</button></form>
     <h2 id="help-title">How to play</h2>
     <p>Watch the durable position here, and use the command line or gitseq-chess MCP server for signed game actions. Presence, motion previews, and chat in this page are temporary.</p>
-    {{if or (not .Game.White) (not .Game.Black)}}<p class="join-instruction">This game has an open seat. Tell your agent: “Use the gitseq-chess MCP <code>join</code> tool to join game <code>{{.Game.ID}}</code>.”</p>{{end}}
+    {{if and .Game.AdmissionOpen (or (not .Game.White) (not .Game.Black))}}<p class="join-instruction">This game has an open seat. Tell your agent: “Use the gitseq-chess MCP <code>join</code> tool to join game <code>{{.Game.ID}}</code>.”</p>{{end}}
   </dialog>
 </body>
 </html>

@@ -27,6 +27,7 @@ import (
 
 const (
 	SchemaCreate     = "chess/create@0"
+	SchemaName       = "chess/name@0"
 	SchemaJoin       = "chess/join@0"
 	SchemaMove       = "chess/move@0"
 	SchemaResign     = "chess/resign@0"
@@ -37,7 +38,7 @@ const (
 	// second, incompatible identity record.
 	SchemaAnchor = identity.AnchorSchema
 
-	FoldVersion = "chess-fold@0"
+	FoldVersion = "chess-fold@1"
 	maxPayload  = 8 << 10
 	maxText     = 256
 	maxRefusals = 256
@@ -61,8 +62,12 @@ type Invitation struct {
 
 type CreatePayload struct {
 	CreatorColor string      `json:"creator_color"`
-	Name         string      `json:"name,omitempty"`
 	Invitation   *Invitation `json:"invitation,omitempty"`
+}
+
+type NamePayload struct {
+	Game string `json:"game"`
+	Name string `json:"name"`
 }
 
 type JoinPayload struct {
@@ -102,22 +107,23 @@ type Projection struct {
 // Game is one game's complete current state. Actor fingerprints and record
 // identifiers are public log data; no private key material is retained here.
 type Game struct {
-	ID          string `json:"id"`
-	Name        string `json:"name,omitempty"`
-	CreatedAt   int64  `json:"created_at"`
-	Creator     string `json:"creator"`
-	White       string `json:"white,omitempty"`
-	Black       string `json:"black,omitempty"`
-	Status      string `json:"status"`
-	Turn        string `json:"turn,omitempty"`
-	FEN         string `json:"fen"`
-	LastMove    string `json:"last_move,omitempty"`
-	LastMoveUCI string `json:"last_move_uci,omitempty"`
-	Moves       int    `json:"moves"`
-	Outcome     string `json:"outcome,omitempty"`
-	Method      string `json:"method,omitempty"`
-	DrawOffer   string `json:"draw_offer,omitempty"`
-	OfferedBy   string `json:"offered_by,omitempty"`
+	ID            string `json:"id"`
+	Name          string `json:"name,omitempty"`
+	AdmissionOpen bool   `json:"admission_open"`
+	CreatedAt     int64  `json:"created_at"`
+	Creator       string `json:"creator"`
+	White         string `json:"white,omitempty"`
+	Black         string `json:"black,omitempty"`
+	Status        string `json:"status"`
+	Turn          string `json:"turn,omitempty"`
+	FEN           string `json:"fen"`
+	LastMove      string `json:"last_move,omitempty"`
+	LastMoveUCI   string `json:"last_move_uci,omitempty"`
+	Moves         int    `json:"moves"`
+	Outcome       string `json:"outcome,omitempty"`
+	Method        string `json:"method,omitempty"`
+	DrawOffer     string `json:"draw_offer,omitempty"`
+	OfferedBy     string `json:"offered_by,omitempty"`
 
 	invitation *Invitation
 	join       string
@@ -158,6 +164,8 @@ func Fold(log host.Log) Projection {
 		switch record.Schema {
 		case SchemaCreate:
 			p.foldCreate(record)
+		case SchemaName:
+			p.foldName(record)
 		case SchemaJoin:
 			p.foldJoin(record)
 		case SchemaMove:
@@ -186,10 +194,6 @@ func (p *Projection) foldCreate(record host.Record) {
 		p.refuse(record, "", "creator_color must be white or black")
 		return
 	}
-	if body.Name != "" && invalidText(body.Name) {
-		p.refuse(record, "", "name must be one line of at most 256 bytes")
-		return
-	}
 	if len(record.RestsOn) != 0 {
 		p.refuse(record, "", "create must not rest on another record")
 		return
@@ -213,8 +217,9 @@ func (p *Projection) foldCreate(record host.Record) {
 		}
 	}
 	game := Game{
-		ID: record.ID, Name: body.Name, CreatedAt: record.Timestamp, Creator: record.Actor,
-		Status: "open", engine: rules.NewGame(rules.UseNotation(rules.UCINotation{})),
+		ID: record.ID, CreatedAt: record.Timestamp, Creator: record.Actor,
+		AdmissionOpen: body.Invitation == nil,
+		Status:        "open", engine: rules.NewGame(rules.UseNotation(rules.UCINotation{})),
 	}
 	if body.CreatorColor == "white" {
 		game.White = record.Actor
@@ -229,6 +234,36 @@ func (p *Projection) foldCreate(record host.Record) {
 	}
 	p.ByID[game.ID] = len(p.Games)
 	p.Games = append(p.Games, game)
+}
+
+func (p *Projection) foldName(record host.Record) {
+	var body NamePayload
+	if err := decode(record.Payload, &body); err != nil {
+		p.refuse(record, "", err.Error())
+		return
+	}
+	game := p.game(body.Game)
+	if game == nil {
+		p.refuse(record, body.Game, "game does not exist")
+		return
+	}
+	if len(record.RestsOn) != 1 || record.RestsOn[0] != game.ID {
+		p.refuse(record, body.Game, "name must rest on the game create record")
+		return
+	}
+	if record.Actor != game.Creator {
+		p.refuse(record, body.Game, "only the creator may name the game")
+		return
+	}
+	if invalidText(body.Name) {
+		p.refuse(record, body.Game, "name must be one line of at most 256 bytes")
+		return
+	}
+	if game.Name != "" {
+		p.refuse(record, body.Game, "game already has a name")
+		return
+	}
+	game.Name = body.Name
 }
 
 func (p *Projection) foldJoin(record host.Record) {
@@ -323,11 +358,7 @@ func (p *Projection) foldMove(record host.Record) {
 	}
 	if err := game.engine.MoveStr(body.Move); err != nil {
 		reason := "move is illegal in the current position"
-		if detail := LegalSelection(*game, body.Move[:2]).Reason; detail != "" {
-			reason += ": " + detail
-		} else {
-			reason += fmt.Sprintf(": destination %s is not valid from %s", body.Move[2:], body.Move[:2])
-		}
+		reason += ": " + invalidMoveDetail(*game, body.Move)
 		p.refuse(record, body.Game, reason)
 		return
 	}
@@ -663,6 +694,21 @@ func LegalSelection(game Game, from string) LegalSelectionResult {
 	return LegalSelectionResult{Destinations: result}
 }
 
+func invalidMoveDetail(game Game, move string) string {
+	selection := LegalSelection(game, move[:2])
+	if selection.Reason != "" {
+		return selection.Reason
+	}
+	if len(move) == 4 {
+		for _, destination := range selection.Destinations {
+			if len(destination) == 3 && strings.HasPrefix(destination, move[2:4]) {
+				return fmt.Sprintf("a promotion piece is required; use %sq, %sr, %sb, or %sn", move, move, move, move)
+			}
+		}
+	}
+	return fmt.Sprintf("destination %s is not valid from %s", move[2:], move[:2])
+}
+
 func colorName(color rules.Color) string {
 	if color == rules.Black {
 		return "black"
@@ -724,7 +770,7 @@ func Decision(ctx context.Context, ws *host.Workspace, record string) (effective
 	for _, candidate := range log.Records {
 		if candidate.ID == record {
 			switch candidate.Schema {
-			case SchemaCreate, SchemaJoin, SchemaMove, SchemaResign, SchemaDrawOffer, SchemaDrawAccept:
+			case SchemaCreate, SchemaName, SchemaJoin, SchemaMove, SchemaResign, SchemaDrawOffer, SchemaDrawAccept:
 				// Re-folding the prefix bounds diagnostics and yields the exact
 				// decision at the record's position.
 				prefix := log
@@ -765,12 +811,6 @@ func encode(value any) ([]byte, error) {
 // Create records a new game. creatorColor is white or black. inviteKey and
 // joinSecret are mutually exclusive; leaving both empty creates an open game.
 func Create(ctx context.Context, ws *host.Workspace, signer ed25519.PrivateKey, creatorColor, inviteKey, joinSecret, idempotencyKey string) (host.Record, error) {
-	return CreateNamed(ctx, ws, signer, "", creatorColor, inviteKey, joinSecret, idempotencyKey)
-}
-
-// CreateNamed records a new game with optional display text. The record ID
-// remains the durable game identifier.
-func CreateNamed(ctx context.Context, ws *host.Workspace, signer ed25519.PrivateKey, name, creatorColor, inviteKey, joinSecret, idempotencyKey string) (host.Record, error) {
 	if creatorColor != "white" && creatorColor != "black" {
 		return host.Record{}, errors.New("creator color must be white or black")
 	}
@@ -780,10 +820,7 @@ func CreateNamed(ctx context.Context, ws *host.Workspace, signer ed25519.Private
 	if inviteKey != "" && !validActorFingerprint(inviteKey) {
 		return host.Record{}, errors.New("invite key must be a lowercase SHA-256 fingerprint")
 	}
-	if name != "" && invalidText(name) {
-		return host.Record{}, errors.New("name must be one line of at most 256 bytes")
-	}
-	body := CreatePayload{CreatorColor: creatorColor, Name: name}
+	body := CreatePayload{CreatorColor: creatorColor}
 	if inviteKey != "" {
 		body.Invitation = &Invitation{OpponentKey: inviteKey}
 	}
@@ -796,6 +833,44 @@ func CreateNamed(ctx context.Context, ws *host.Workspace, signer ed25519.Private
 		return host.Record{}, err
 	}
 	return ws.Append(ctx, signer, host.Act{Schema: SchemaCreate, Payload: payload, IdempotencyKey: idempotencyKey})
+}
+
+// CreateNamed creates a v0 game and, when requested, follows it with a
+// display-only naming act. Keeping name out of chess/create@0 preserves that
+// schema's exact bytes and judgments for older folds.
+func CreateNamed(ctx context.Context, ws *host.Workspace, signer ed25519.PrivateKey, name, creatorColor, inviteKey, joinSecret, idempotencyKey string) (host.Record, error) {
+	if name != "" && invalidText(name) {
+		return host.Record{}, errors.New("name must be one line of at most 256 bytes")
+	}
+	created, err := Create(ctx, ws, signer, creatorColor, inviteKey, joinSecret, idempotencyKey)
+	if err != nil || name == "" {
+		return created, err
+	}
+	payload, err := encode(NamePayload{Game: created.ID, Name: name})
+	if err != nil {
+		return host.Record{}, err
+	}
+	nameIdempotency := ""
+	if idempotencyKey != "" {
+		nameIdempotency = idempotencyKey + "/name"
+	}
+	named, err := ws.Append(ctx, signer, host.Act{
+		Schema: SchemaName, Payload: payload, RestsOn: []string{created.ID}, IdempotencyKey: nameIdempotency,
+	})
+	if err != nil {
+		return host.Record{}, err
+	}
+	effective, found, reason, err := Decision(ctx, ws, named.ID)
+	if err != nil {
+		return host.Record{}, err
+	}
+	if !found || !effective {
+		if reason == "" {
+			reason = "name act was not accepted"
+		}
+		return host.Record{}, errors.New(reason)
+	}
+	return created, nil
 }
 
 // Join records an attempt to take the open opponent seat.

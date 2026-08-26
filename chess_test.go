@@ -1,12 +1,14 @@
 package chess_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -207,15 +209,138 @@ func TestLegalDestinationsComeFromTheFoldEngine(t *testing.T) {
 
 func TestCreateNameIsProjectedAndInvalidNamesAreRefused(t *testing.T) {
 	b := &logBuilder{}
-	b.add("named", white, chess.SchemaCreate, chess.CreatePayload{CreatorColor: "white", Name: "Coffeehouse"})
-	b.add("bad-name", black, chess.SchemaCreate, chess.CreatePayload{CreatorColor: "black", Name: "two\nlines"})
+	b.add("named", white, chess.SchemaCreate, chess.CreatePayload{CreatorColor: "white"})
+	b.add("name", white, chess.SchemaName, chess.NamePayload{Game: "named", Name: "Coffeehouse"}, "named")
+	b.add("hijack-name", black, chess.SchemaName, chess.NamePayload{Game: "named", Name: "Hijacked"}, "named")
+	b.add("rename", white, chess.SchemaName, chess.NamePayload{Game: "named", Name: "Renamed"}, "named")
+	b.add("bad-name-game", black, chess.SchemaCreate, chess.CreatePayload{CreatorColor: "black"})
+	b.add("bad-name", black, chess.SchemaName, chess.NamePayload{Game: "bad-name-game", Name: "two\nlines"}, "bad-name-game")
 	projection := b.fold()
 	game, ok := projection.GameByID("named")
 	if !ok || game.Name != "Coffeehouse" {
 		t.Fatalf("named game = %+v, found %v", game, ok)
 	}
-	if _, ok := projection.GameByID("bad-name"); ok || projection.RefusedTotal != 1 || projection.Refused[0].Reason != "name must be one line of at most 256 bytes" {
+	if bad, ok := projection.GameByID("bad-name-game"); !ok || bad.Name != "" || projection.RefusedTotal != 3 ||
+		projection.Refused[0].Reason != "only the creator may name the game" ||
+		projection.Refused[1].Reason != "game already has a name" ||
+		projection.Refused[2].Reason != "name must be one line of at most 256 bytes" {
 		t.Fatalf("invalid name projection = %+v", projection)
+	}
+}
+
+func TestCreateV0JudgmentsRemainCompatibleInBothDirections(t *testing.T) {
+	legacyDecision := func(record host.Record) bool {
+		var body struct {
+			CreatorColor string            `json:"creator_color"`
+			Invitation   *chess.Invitation `json:"invitation,omitempty"`
+		}
+		decoder := json.NewDecoder(bytes.NewReader(record.Payload))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&body); err != nil {
+			return false
+		}
+		canonical, err := json.Marshal(body)
+		return err == nil && bytes.Equal(canonical, record.Payload) &&
+			(body.CreatorColor == "white" || body.CreatorColor == "black") && len(record.RestsOn) == 0
+	}
+	currentDecision := func(record host.Record) bool {
+		projection := chess.Fold(host.Log{Genesis: "genesis", Head: record.ID, Depth: 1, Records: []host.Record{record}})
+		return len(projection.Games) == 1 && projection.RefusedTotal == 0
+	}
+
+	legacyRecord := host.Record{ID: "legacy", Actor: white, Schema: chess.SchemaCreate, Payload: []byte(`{"creator_color":"white"}`), Timestamp: 1}
+	currentPayload, err := json.Marshal(chess.CreatePayload{CreatorColor: "black"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentRecord := host.Record{ID: "current", Actor: black, Schema: chess.SchemaCreate, Payload: currentPayload, Timestamp: 1}
+	createWithName := host.Record{ID: "name-in-v0", Actor: white, Schema: chess.SchemaCreate, Payload: []byte(`{"creator_color":"white","name":"wrong schema"}`), Timestamp: 1}
+	for _, test := range []struct {
+		record host.Record
+		want   bool
+	}{{legacyRecord, true}, {currentRecord, true}, {createWithName, false}} {
+		if old, current := legacyDecision(test.record), currentDecision(test.record); old != test.want || current != old {
+			t.Fatalf("create@0 %s disagreement: legacy=%v current=%v want=%v payload=%s", test.record.ID, old, current, test.want, test.record.Payload)
+		}
+	}
+
+	withName := &logBuilder{}
+	withName.add("game", white, chess.SchemaCreate, chess.CreatePayload{CreatorColor: "white"})
+	withName.add("name", white, chess.SchemaName, chess.NamePayload{Game: "game", Name: "Only fold@1 sees this"}, "game")
+	current := withName.fold()
+	game, _ := current.GameByID("game")
+	if game.Name != "Only fold@1 sees this" {
+		t.Fatalf("fold@1 did not project naming act: %+v", game)
+	}
+	// A frozen v0 fold recognizes only create@0 and therefore retains the same
+	// create judgment while leaving the display-only name empty.
+	legacyGameFound, legacyName := false, ""
+	for _, record := range withName.records {
+		if record.Schema == chess.SchemaCreate && legacyDecision(record) {
+			legacyGameFound = true
+		}
+	}
+	if !legacyGameFound || legacyName != "" || withName.records[1].Schema == chess.SchemaCreate {
+		t.Fatalf("frozen fold@0 projection found=%v name=%q", legacyGameFound, legacyName)
+	}
+}
+
+func TestHostBindingRejectsFoldVersionMismatchInBothDirections(t *testing.T) {
+	ctx := context.Background()
+	v1 := chess.Application
+	v0 := chess.Application
+	v0.FoldVersion = "chess-fold@0"
+	for _, test := range []struct {
+		name       string
+		bound, run host.Application
+	}{{"v0 repository under v1", v0, v1}, {"v1 repository under v0", v1, v0}} {
+		t.Run(test.name, func(t *testing.T) {
+			repo := filepath.Join(t.TempDir(), "repo")
+			if output, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+				t.Fatalf("git init: %v: %s", err, output)
+			}
+			workspace, err := host.Init(ctx, repo, test.bound, key(t), host.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			log, err := workspace.Records(ctx)
+			if err != nil || len(log.Records) == 0 || log.Records[0].Schema != "gitseq/app-binding@0" {
+				t.Fatalf("binding schema changed: records=%+v err=%v", log.Records, err)
+			}
+			if _, err := host.Open(ctx, repo, test.run); !errors.Is(err, host.ErrUninterpretable) {
+				t.Fatalf("cross-version open = %v, want ErrUninterpretable", err)
+			}
+		})
+	}
+}
+
+func TestBarePromotionExplainsTheRequiredPieceAndThenPromotes(t *testing.T) {
+	b, _ := joinedGame(t)
+	chain := "join"
+	sequence := []struct {
+		actor string
+		move  string
+	}{
+		{white, "a2a4"}, {black, "h7h6"},
+		{white, "a4a5"}, {black, "h6h5"},
+		{white, "a5a6"}, {black, "h5h4"},
+		{white, "a6b7"}, {black, "h4h3"},
+	}
+	for index, play := range sequence {
+		id := fmt.Sprintf("promotion-%d", index)
+		b.add(id, play.actor, chess.SchemaMove, chess.MovePayload{Game: "game", Move: play.move}, chain)
+		chain = id
+	}
+	b.add("bare-promotion", white, chess.SchemaMove, chess.MovePayload{Game: "game", Move: "b7a8"}, chain)
+	b.add("promotion", white, chess.SchemaMove, chess.MovePayload{Game: "game", Move: "b7a8q"}, chain)
+	projection := b.fold()
+	game, _ := projection.GameByID("game")
+	if game.LastMove != "promotion" || game.LastMoveUCI != "b7a8q" || game.Moves != len(sequence)+1 {
+		t.Fatalf("promotion game = %+v", game)
+	}
+	if projection.RefusedTotal != 1 || projection.Refused[0].Record != "bare-promotion" ||
+		projection.Refused[0].Reason != "move is illegal in the current position: a promotion piece is required; use b7a8q, b7a8r, b7a8b, or b7a8n" {
+		t.Fatalf("promotion refusal = %+v", projection.Refused)
 	}
 }
 

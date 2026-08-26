@@ -450,6 +450,20 @@ func TestEmbeddedUIRendersTheExactFoldedPositionAndSeats(t *testing.T) {
 		t.Fatalf("wrong-turn move unexpectedly effective: %+v", refused)
 	}
 	openID := call("create", "--repo", repo, "--name", "Agent match", "--color", "white")["game"].(string)
+	restrictedSecret := filepath.Join(t.TempDir(), "restricted.secret")
+	if err := os.WriteFile(restrictedSecret, []byte("not in the projection\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secretID := call("create", "--repo", repo, "--name", "Secret match", "--color", "white", "--join-secret-file", restrictedSecret)["game"].(string)
+	invitePublic, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inviteFingerprint, err := live.ActorFingerprint(invitePublic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inviteID := call("create", "--repo", repo, "--name", "Invited match", "--color", "white", "--invite-key", inviteFingerprint)["game"].(string)
 
 	_, projection, err := application.OpenProjection(ctx, repo)
 	if err != nil {
@@ -511,6 +525,34 @@ func TestEmbeddedUIRendersTheExactFoldedPositionAndSeats(t *testing.T) {
 	for _, want := range []string{"This game has an open seat", "gitseq-chess MCP", "join", openID} {
 		if !strings.Contains(openPage, want) {
 			t.Errorf("open-game help does not contain %q", want)
+		}
+	}
+	openGame, _ := projection.GameByID(openID)
+	if !openGame.AdmissionOpen {
+		t.Fatal("open game does not expose its non-secret admission predicate")
+	}
+	for _, restrictedID := range []string{secretID, inviteID} {
+		restrictedGame, _ := projection.GameByID(restrictedID)
+		if restrictedGame.AdmissionOpen {
+			t.Errorf("restricted game %s claims open admission", restrictedID)
+		}
+		restrictedRequest := httptest.NewRequest(http.MethodGet, "/game?game="+url.QueryEscape(restrictedID), nil)
+		restrictedResponse := httptest.NewRecorder()
+		handler.ServeHTTP(restrictedResponse, restrictedRequest)
+		if restrictedResponse.Code != http.StatusOK {
+			t.Fatalf("restricted game status = %d", restrictedResponse.Code)
+		}
+		restrictedPage := restrictedResponse.Body.String()
+		if strings.Contains(restrictedPage, "This game has an open seat") || strings.Contains(restrictedPage, "MCP <code>join</code>") {
+			t.Errorf("restricted game %s advertises an open MCP join", restrictedID)
+		}
+
+		boardRequest := httptest.NewRequest(http.MethodGet, "/v1/board?game="+url.QueryEscape(restrictedID), nil)
+		boardResponse := httptest.NewRecorder()
+		handler.ServeHTTP(boardResponse, boardRequest)
+		body := boardResponse.Body.String()
+		if !strings.Contains(body, `"admission_open":false`) || strings.Contains(body, "secret_hash") || strings.Contains(body, "opponent_key") {
+			t.Errorf("restricted board exposed more than its admission predicate: %s", body)
 		}
 	}
 

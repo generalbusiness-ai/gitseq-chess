@@ -42,7 +42,8 @@ creates it before signing Bob's join:
 ```
 
 Play in UCI notation (`e2e4` means move from e2 to e4), alternating the first
-player's managed key and Bob's named key:
+player's managed key and Bob's named key. A promotion appends the chosen piece:
+for example, `a7b8q` promotes to a queen; use `r`, `b`, or `n` for another piece.
 
 ```sh
 ./chess move --repo game-data --game '<game-id>' --move e2e4
