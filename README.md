@@ -98,16 +98,37 @@ changes identity between being named and being opened, and any publication that
 is not exclusive. The program pins the operator-chosen parent after opening it,
 but does not validate that parent's permissions.
 
-## Read service and MCP
+## Web view, read service, and MCP
 
-`chess serve` exposes bounded, read-only JSON endpoints:
+`chess serve` prints the address of an embedded, read-only web interface. Its
+lobby and game pages render only the current durable fold. Selecting a square
+asks the fold's rules engine for legal destinations; the browser does not carry
+a second chess implementation. The page reloads when the verified frontier
+moves. A separate process-local live room shows watchers, signed chat, and
+legal motion previews. Those previews never move the durable board.
+
+Watching is keyless. Joining presence or chat creates a non-exportable
+Ed25519 private key in browser memory, proves possession to the server, and
+keeps the server-minted lease credential in memory too. Reloading or closing
+the tab loses both. The server derives white, black, or watcher status from the
+folded seats; the browser cannot claim a role. Live state has its own cursor,
+resets when the process restarts, and is never presented as durable history.
+Drag and submit hints are bounded presence values, not chat history, and vanish
+when the lease renews or expires. A newly generated browser key is normally a
+watcher for CLI-created games; the page can receive and animate hints from an
+authorized seated session, while durable browser seat custody and submission
+remain outside this service.
+
+The same server exposes bounded, read-only JSON endpoints:
 
 - `GET /v1/games?limit=100&after=<game>`
 - `GET /v1/board?game=<game>`
 - `GET /v1/legal?game=<game>&from=e2`
 
-The browser write path and UI belong to later work. This service therefore does
-not accept private keys or unsigned write requests over HTTP.
+The durable browser write path belongs to later work. This service accepts only
+the public half and signatures for its ephemeral live room; it never receives
+a private key and has no HTTP endpoint for durable chess acts. Use the command
+line or MCP adapter for signed moves, joins, draws, and resignations.
 
 `chess mcp --repo game-data --key agent.key` runs a newline-delimited JSON-RPC
 MCP adapter on standard input and output. It offers bounded game listing, board

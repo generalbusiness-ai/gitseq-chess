@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Game · Gitseq Chess</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body data-head="{{.Head}}" data-view="game" data-game="{{.Game.ID}}">
+  <header class="masthead">
+    <a class="wordmark" href="/">Gitseq Chess</a>
+    <span class="frontier" title="{{.Head}}">Verified frontier <code>{{.Head}}</code></span>
+  </header>
+  <main class="shell game-shell">
+    <section class="game-summary">
+      <p class="eyebrow"><a href="/">Lobby</a> / game</p>
+      <h1>{{.Game.Status}}{{if .Game.Turn}} · {{.Game.Turn}} to move{{end}}</h1>
+      {{if .Game.Outcome}}<p class="outcome">{{.Game.Outcome}} by {{.Game.Method}}</p>{{end}}
+      <dl class="seats">
+        <div><dt>White</dt><dd>{{if .Game.White}}<code>{{.Game.White}}</code>{{else}}Open{{end}}</dd></div>
+        <div><dt>Black</dt><dd>{{if .Game.Black}}<code>{{.Game.Black}}</code>{{else}}Open{{end}}</dd></div>
+      </dl>
+      <p class="read-only">Read-only view. Use the command line or MCP adapter to make a signed move.</p>
+      {{if .Refused}}<section class="game-refusals" aria-labelledby="refusals-title">
+        <h2 id="refusals-title">Refused recorded acts</h2>
+        <p>The folded board did not change for these acts. A provisional move snaps back to this durable position.</p>
+        <ol>{{range .Refused}}<li><strong>{{.Reason}}</strong> <code>{{.Record}}</code></li>{{end}}</ol>
+      </section>{{end}}
+      <p id="move-help" class="move-help" aria-live="polite">Select a piece to ask the fold for its legal destinations.</p>
+      <section class="live-panel" aria-labelledby="live-title">
+        <div class="live-heading">
+          <h2 id="live-title">Live room</h2>
+          <button id="join-live" class="join-live" type="button">Join presence and chat</button>
+        </div>
+        <p id="live-status" class="live-status" aria-live="polite">Watching needs no key. Joining creates a temporary, non-exportable signing key in this tab.</p>
+        <h3>Here now</h3>
+        <ul id="participants" class="participants"><li>No live participants.</li></ul>
+        <h3>Chat</h3>
+        <ol id="chat-log" class="chat-log"><li>No messages in this process-local room.</li></ol>
+        <form id="chat-form" class="chat-form">
+          <label for="chat-text">Message</label>
+          <div><input id="chat-text" name="text" maxlength="16384" disabled><button type="submit" disabled>Send</button></div>
+        </form>
+      </section>
+    </section>
+    <section class="board-panel" aria-label="Chess board">
+      <div class="board" data-game="{{.Game.ID}}" data-fen="{{.Game.FEN}}">
+        {{range .Squares}}<button class="square {{if .Dark}}dark{{else}}light{{end}}" type="button" data-square="{{.Name}}" aria-label="{{.Label}}"><span aria-hidden="true">{{.Piece}}</span></button>{{end}}
+      </div>
+      <div class="position-meta">
+        <span>Moves {{.Game.Moves}}</span>
+        {{if .Game.LastMoveUCI}}<span>Last move <code>{{.Game.LastMoveUCI}}</code></span>{{end}}
+        {{if .Game.DrawOffer}}<span>Draw offered by <code>{{.Game.OfferedBy}}</code></span>{{end}}
+      </div>
+      <details>
+        <summary>Folded position</summary>
+        <code class="fen">{{.Game.FEN}}</code>
+        <code class="game-id">{{.Game.ID}}</code>
+      </details>
+    </section>
+  </main>
+</body>
+</html>
