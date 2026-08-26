@@ -482,11 +482,13 @@ func TestEmbeddedUIRendersTheExactFoldedPositionAndSeats(t *testing.T) {
 		t.Fatalf("wrong-turn move unexpectedly effective: %+v", refused)
 	}
 	openID := call("create", "--repo", repo, "--name", "Agent match", "--color", "white")["game"].(string)
+	whiteOpenID := call("create", "--repo", repo, "--name", "White seat open", "--color", "black")["game"].(string)
 	restrictedSecret := filepath.Join(t.TempDir(), "restricted.secret")
 	if err := os.WriteFile(restrictedSecret, []byte("not in the projection\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	secretID := call("create", "--repo", repo, "--name", "Secret match", "--color", "white", "--join-secret-file", restrictedSecret)["game"].(string)
+	whiteRestrictedID := call("create", "--repo", repo, "--name", "White seat restricted", "--color", "black", "--join-secret-file", restrictedSecret)["game"].(string)
 	invitePublic, _, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -539,10 +541,16 @@ func TestEmbeddedUIRendersTheExactFoldedPositionAndSeats(t *testing.T) {
 	if card := cardFor(openID); !strings.Contains(card, "White seated · Black open") || strings.Contains(card, "Black restricted") {
 		t.Errorf("open-game card has wrong admission copy: %s", card)
 	}
+	if card := cardFor(whiteOpenID); !strings.Contains(card, "White open · Black seated") || strings.Contains(card, "White restricted") {
+		t.Errorf("white-open game card has wrong admission copy: %s", card)
+	}
 	for _, restrictedID := range []string{secretID, inviteID} {
 		if card := cardFor(restrictedID); !strings.Contains(card, "White seated · Black restricted") || strings.Contains(card, "Black open") {
 			t.Errorf("restricted-game card %s has wrong admission copy: %s", restrictedID, card)
 		}
+	}
+	if card := cardFor(whiteRestrictedID); !strings.Contains(card, "White restricted · Black seated") || strings.Contains(card, "White open") {
+		t.Errorf("white-restricted game card has wrong admission copy: %s", card)
 	}
 	if csp := lobbyResponse.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") || strings.Contains(csp, "unsafe-inline") {
 		t.Errorf("Content-Security-Policy = %q", csp)
@@ -570,41 +578,53 @@ func TestEmbeddedUIRendersTheExactFoldedPositionAndSeats(t *testing.T) {
 		t.Error("game page still contains retired frontier or chat copy")
 	}
 
-	openRequest := httptest.NewRequest(http.MethodGet, "/game?game="+url.QueryEscape(openID), nil)
-	openResponse := httptest.NewRecorder()
-	handler.ServeHTTP(openResponse, openRequest)
-	openPage := openResponse.Body.String()
-	for _, want := range []string{"This game has an open seat", "gitseq-chess MCP", "join", openID} {
-		if !strings.Contains(openPage, want) {
-			t.Errorf("open-game help does not contain %q", want)
+	gamePage := func(game string) string {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "/game?game="+url.QueryEscape(game), nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("game %s status = %d", game, response.Code)
 		}
+		return response.Body.String()
 	}
-	if !strings.Contains(openPage, "<dt>Black</dt><dd>Open</dd>") || strings.Contains(openPage, "<dt>Black</dt><dd>Restricted</dd>") {
-		t.Errorf("open-game page has wrong empty-seat copy: %s", openPage)
-	}
-	openGame, _ := projection.GameByID(openID)
-	if !openGame.AdmissionOpen {
-		t.Fatal("open game does not expose its non-secret admission predicate")
+	for _, open := range []struct {
+		id, emptySide string
+	}{{openID, "Black"}, {whiteOpenID, "White"}} {
+		openPage := gamePage(open.id)
+		for _, want := range []string{"This game has an open seat", "gitseq-chess MCP", "join", open.id} {
+			if !strings.Contains(openPage, want) {
+				t.Errorf("open-game %s help does not contain %q", open.id, want)
+			}
+		}
+		openSeat := "<dt>" + open.emptySide + "</dt><dd>Open</dd>"
+		restrictedSeat := "<dt>" + open.emptySide + "</dt><dd>Restricted</dd>"
+		if !strings.Contains(openPage, openSeat) || strings.Contains(openPage, restrictedSeat) {
+			t.Errorf("open-game page %s has wrong %s-seat copy: %s", open.id, open.emptySide, openPage)
+		}
+		openGame, _ := projection.GameByID(open.id)
+		if !openGame.AdmissionOpen {
+			t.Errorf("open game %s does not expose its non-secret admission predicate", open.id)
+		}
 	}
 	secretDigest := sha256.Sum256([]byte("not in the projection"))
 	secretHash := hex.EncodeToString(secretDigest[:])
-	for _, restrictedID := range []string{secretID, inviteID} {
+	for _, restricted := range []struct {
+		id, emptySide string
+	}{{secretID, "Black"}, {inviteID, "Black"}, {whiteRestrictedID, "White"}} {
+		restrictedID := restricted.id
 		restrictedGame, _ := projection.GameByID(restrictedID)
 		if restrictedGame.AdmissionOpen {
 			t.Errorf("restricted game %s claims open admission", restrictedID)
 		}
-		restrictedRequest := httptest.NewRequest(http.MethodGet, "/game?game="+url.QueryEscape(restrictedID), nil)
-		restrictedResponse := httptest.NewRecorder()
-		handler.ServeHTTP(restrictedResponse, restrictedRequest)
-		if restrictedResponse.Code != http.StatusOK {
-			t.Fatalf("restricted game status = %d", restrictedResponse.Code)
-		}
-		restrictedPage := restrictedResponse.Body.String()
+		restrictedPage := gamePage(restrictedID)
 		if strings.Contains(restrictedPage, "This game has an open seat") || strings.Contains(restrictedPage, "MCP <code>join</code>") {
 			t.Errorf("restricted game %s advertises an open MCP join", restrictedID)
 		}
-		if !strings.Contains(restrictedPage, "<dt>Black</dt><dd>Restricted</dd>") || strings.Contains(restrictedPage, "<dt>Black</dt><dd>Open</dd>") {
-			t.Errorf("restricted-game page %s has wrong empty-seat copy: %s", restrictedID, restrictedPage)
+		restrictedSeat := "<dt>" + restricted.emptySide + "</dt><dd>Restricted</dd>"
+		openSeat := "<dt>" + restricted.emptySide + "</dt><dd>Open</dd>"
+		if !strings.Contains(restrictedPage, restrictedSeat) || strings.Contains(restrictedPage, openSeat) {
+			t.Errorf("restricted-game page %s has wrong %s-seat copy: %s", restrictedID, restricted.emptySide, restrictedPage)
 		}
 		for _, private := range []string{"not in the projection", secretHash, inviteFingerprint, "secret_hash", "opponent_key"} {
 			if strings.Contains(restrictedPage, private) {
