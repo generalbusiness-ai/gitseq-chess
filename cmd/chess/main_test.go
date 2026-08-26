@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -577,10 +579,15 @@ func TestEmbeddedUIRendersTheExactFoldedPositionAndSeats(t *testing.T) {
 			t.Errorf("open-game help does not contain %q", want)
 		}
 	}
+	if !strings.Contains(openPage, "<dt>Black</dt><dd>Open</dd>") || strings.Contains(openPage, "<dt>Black</dt><dd>Restricted</dd>") {
+		t.Errorf("open-game page has wrong empty-seat copy: %s", openPage)
+	}
 	openGame, _ := projection.GameByID(openID)
 	if !openGame.AdmissionOpen {
 		t.Fatal("open game does not expose its non-secret admission predicate")
 	}
+	secretDigest := sha256.Sum256([]byte("not in the projection"))
+	secretHash := hex.EncodeToString(secretDigest[:])
 	for _, restrictedID := range []string{secretID, inviteID} {
 		restrictedGame, _ := projection.GameByID(restrictedID)
 		if restrictedGame.AdmissionOpen {
@@ -595,6 +602,14 @@ func TestEmbeddedUIRendersTheExactFoldedPositionAndSeats(t *testing.T) {
 		restrictedPage := restrictedResponse.Body.String()
 		if strings.Contains(restrictedPage, "This game has an open seat") || strings.Contains(restrictedPage, "MCP <code>join</code>") {
 			t.Errorf("restricted game %s advertises an open MCP join", restrictedID)
+		}
+		if !strings.Contains(restrictedPage, "<dt>Black</dt><dd>Restricted</dd>") || strings.Contains(restrictedPage, "<dt>Black</dt><dd>Open</dd>") {
+			t.Errorf("restricted-game page %s has wrong empty-seat copy: %s", restrictedID, restrictedPage)
+		}
+		for _, private := range []string{"not in the projection", secretHash, inviteFingerprint, "secret_hash", "opponent_key"} {
+			if strings.Contains(restrictedPage, private) {
+				t.Errorf("restricted-game page %s exposed private invitation material %q", restrictedID, private)
+			}
 		}
 
 		boardRequest := httptest.NewRequest(http.MethodGet, "/v1/board?game="+url.QueryEscape(restrictedID), nil)

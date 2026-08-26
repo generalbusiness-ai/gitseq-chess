@@ -24,8 +24,8 @@
       <p class="game-status">{{.Game.Status}}{{if .Game.Turn}} · {{.Game.Turn}} to move{{end}}</p>
       {{if .Game.Outcome}}<p class="outcome">{{.Game.Outcome}} by {{.Game.Method}}</p>{{end}}
       <dl class="seats">
-        <div><dt>White</dt><dd>{{if .Game.White}}<code>{{.Game.White}}</code>{{else}}Open{{end}}</dd></div>
-        <div><dt>Black</dt><dd>{{if .Game.Black}}<code>{{.Game.Black}}</code>{{else}}Open{{end}}</dd></div>
+        <div><dt>White</dt><dd>{{if .Game.White}}<code>{{.Game.White}}</code>{{else if .Game.AdmissionOpen}}Open{{else}}Restricted{{end}}</dd></div>
+        <div><dt>Black</dt><dd>{{if .Game.Black}}<code>{{.Game.Black}}</code>{{else if .Game.AdmissionOpen}}Open{{else}}Restricted{{end}}</dd></div>
       </dl>
     </section>
     <section class="play-area">
