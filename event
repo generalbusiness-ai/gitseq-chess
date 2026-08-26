@@ -1,1 +1,1 @@
-{"kind":"artifact","text":"At the exact test-guard successor head, the reviewed browser client behavior is unchanged. The successor changes only server regression tests.","body":{"commit":"b9483eaad39d27bc2747f5e8ec0c1501d03e4e2f","path":"cmd/chess/ui/app.js"}}
+{"kind":"artifact","text":"At the exact test-guard successor head, the reviewed first-user layout and styling are unchanged. The successor changes only server regression tests.","body":{"commit":"b9483eaad39d27bc2747f5e8ec0c1501d03e4e2f","path":"cmd/chess/ui/app.css"}}
