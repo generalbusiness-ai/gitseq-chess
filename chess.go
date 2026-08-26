@@ -850,10 +850,7 @@ func CreateNamed(ctx context.Context, ws *host.Workspace, signer ed25519.Private
 	if err != nil {
 		return host.Record{}, err
 	}
-	nameIdempotency := ""
-	if idempotencyKey != "" {
-		nameIdempotency = idempotencyKey + "/name"
-	}
+	nameIdempotency := nameIdempotencyKey(idempotencyKey)
 	named, err := ws.Append(ctx, signer, host.Act{
 		Schema: SchemaName, Payload: payload, RestsOn: []string{created.ID}, IdempotencyKey: nameIdempotency,
 	})
@@ -871,6 +868,18 @@ func CreateNamed(ctx context.Context, ws *host.Workspace, signer ed25519.Private
 		return host.Record{}, errors.New(reason)
 	}
 	return created, nil
+}
+
+// nameIdempotencyKey gives the follow-up name act its own retry identity
+// without extending a caller key that may already be at the host's bound.
+// The NUL terminates the fixed domain inside the digest; it is never emitted
+// in the host-visible key.
+func nameIdempotencyKey(callerKey string) string {
+	if callerKey == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte("gitseq-chess/chess-name-idempotency@0\x00" + callerKey))
+	return "chess/name@0:" + hex.EncodeToString(digest[:])
 }
 
 // Join records an attempt to take the open opponent seat.

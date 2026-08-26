@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	chess "github.com/generalbusiness-ai/gitseq-chess"
@@ -225,6 +226,64 @@ func TestCreateNameIsProjectedAndInvalidNamesAreRefused(t *testing.T) {
 		projection.Refused[1].Reason != "game already has a name" ||
 		projection.Refused[2].Reason != "name must be one line of at most 256 bytes" {
 		t.Fatalf("invalid name projection = %+v", projection)
+	}
+}
+
+func TestCreateNamedRetriesAtTheHostStringBound(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "max-idempotency-repo")
+	if output, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	workspace, err := host.Init(ctx, repo, chess.Application, key(t), host.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer := key(t)
+	// The host's signed-intent contract accepts strings through 32 KiB. The
+	// derived name key must stay bounded even when the caller uses all of it.
+	idempotencyKey := strings.Repeat("k", 32<<10)
+	const name = "Boundary game"
+	first, err := chess.CreateNamed(ctx, workspace, signer, name, "white", "", "", idempotencyKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := chess.CreateNamed(ctx, workspace, signer, name, "white", "", "", idempotencyKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.ID != first.ID {
+		t.Fatalf("replayed game = %s, want original %s", replayed.ID, first.ID)
+	}
+
+	log, err := workspace.Records(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creates, names := 0, 0
+	var nameRecord host.Record
+	for _, record := range log.Records {
+		switch record.Schema {
+		case chess.SchemaCreate:
+			creates++
+		case chess.SchemaName:
+			names++
+			nameRecord = record
+		}
+	}
+	if creates != 1 || names != 1 {
+		t.Fatalf("records contain %d creates and %d names, want exactly one of each", creates, names)
+	}
+	if effective, found, reason, err := chess.Decision(ctx, workspace, nameRecord.ID); err != nil || !found || !effective {
+		t.Fatalf("name decision effective=%v found=%v reason=%q err=%v", effective, found, reason, err)
+	}
+	projection := chess.Fold(log)
+	if len(projection.Games) != 1 || projection.RefusedTotal != 0 {
+		t.Fatalf("projection has %d games and %d refusals, want one game and none", len(projection.Games), projection.RefusedTotal)
+	}
+	game, ok := projection.GameByID(first.ID)
+	if !ok || game.Name != name {
+		t.Fatalf("projected game = %+v, found %v, want name %q", game, ok, name)
 	}
 }
 
