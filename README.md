@@ -177,6 +177,15 @@ the chosen key; tool results contain only public record data and fold decisions.
 
 - A create chooses the creator's color and an optional opponent key or hashed
   join secret. No invitation means an intentionally open, first-valid-join seat.
+  An unnamed game uses `chess/create@0`. A named game uses the single atomic
+  `chess/create-named@0` act, so a failed name cannot leave behind an open game
+  whose identifier was never returned to the caller.
+- The current application binding is `chess-fold@2`. Fold @1 introduced the
+  creator-only, display-only `chess/name@0` act without changing the exact bytes
+  or judgments of `chess/create@0`; fold @2 still understands those records but
+  adds the combined named-create judgment. A repository's binding is exact, so
+  this build cannot open existing repositories bound to fold @0 or fold @1, and
+  those older builds cannot open a repository bound to fold @2.
 - A join rests on the create. The first qualified join in log order seats.
 - The first move rests on the accepted join; every later move rests on the
   preceding accepted move. Wrong-turn, stale-chain, and illegal moves are

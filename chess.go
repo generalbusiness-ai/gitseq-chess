@@ -26,19 +26,20 @@ import (
 )
 
 const (
-	SchemaCreate     = "chess/create@0"
-	SchemaName       = "chess/name@0"
-	SchemaJoin       = "chess/join@0"
-	SchemaMove       = "chess/move@0"
-	SchemaResign     = "chess/resign@0"
-	SchemaDrawOffer  = "chess/draw-offer@0"
-	SchemaDrawAccept = "chess/draw-accept@0"
+	SchemaCreate      = "chess/create@0"
+	SchemaCreateNamed = "chess/create-named@0"
+	SchemaName        = "chess/name@0"
+	SchemaJoin        = "chess/join@0"
+	SchemaMove        = "chess/move@0"
+	SchemaResign      = "chess/resign@0"
+	SchemaDrawOffer   = "chess/draw-offer@0"
+	SchemaDrawAccept  = "chess/draw-accept@0"
 	// SchemaAnchor is host vocabulary shared by every application. Chess
 	// recognizes its effects through host/identity instead of defining a
 	// second, incompatible identity record.
 	SchemaAnchor = identity.AnchorSchema
 
-	FoldVersion = "chess-fold@1"
+	FoldVersion = "chess-fold@2"
 	maxPayload  = 8 << 10
 	maxText     = 256
 	maxRefusals = 256
@@ -63,6 +64,12 @@ type Invitation struct {
 type CreatePayload struct {
 	CreatorColor string      `json:"creator_color"`
 	Invitation   *Invitation `json:"invitation,omitempty"`
+}
+
+type CreateNamedPayload struct {
+	CreatorColor string      `json:"creator_color"`
+	Invitation   *Invitation `json:"invitation,omitempty"`
+	Name         string      `json:"name"`
 }
 
 type NamePayload struct {
@@ -164,6 +171,8 @@ func Fold(log host.Log) Projection {
 		switch record.Schema {
 		case SchemaCreate:
 			p.foldCreate(record)
+		case SchemaCreateNamed:
+			p.foldCreateNamed(record)
 		case SchemaName:
 			p.foldName(record)
 		case SchemaJoin:
@@ -190,7 +199,24 @@ func (p *Projection) foldCreate(record host.Record) {
 		p.refuse(record, "", err.Error())
 		return
 	}
-	if body.CreatorColor != "white" && body.CreatorColor != "black" {
+	p.foldNewGame(record, body.CreatorColor, body.Invitation, "")
+}
+
+func (p *Projection) foldCreateNamed(record host.Record) {
+	var body CreateNamedPayload
+	if err := decode(record.Payload, &body); err != nil {
+		p.refuse(record, "", err.Error())
+		return
+	}
+	if invalidText(body.Name) {
+		p.refuse(record, "", "name must be one line of at most 256 bytes")
+		return
+	}
+	p.foldNewGame(record, body.CreatorColor, body.Invitation, body.Name)
+}
+
+func (p *Projection) foldNewGame(record host.Record, creatorColor string, invitation *Invitation, name string) {
+	if creatorColor != "white" && creatorColor != "black" {
 		p.refuse(record, "", "creator_color must be white or black")
 		return
 	}
@@ -198,8 +224,8 @@ func (p *Projection) foldCreate(record host.Record) {
 		p.refuse(record, "", "create must not rest on another record")
 		return
 	}
-	if body.Invitation != nil {
-		key, secret := body.Invitation.OpponentKey, body.Invitation.SecretHash
+	if invitation != nil {
+		key, secret := invitation.OpponentKey, invitation.SecretHash
 		if (key == "") == (secret == "") {
 			p.refuse(record, "", "invitation must name exactly one opponent key or secret hash")
 			return
@@ -218,18 +244,19 @@ func (p *Projection) foldCreate(record host.Record) {
 	}
 	game := Game{
 		ID: record.ID, CreatedAt: record.Timestamp, Creator: record.Actor,
-		AdmissionOpen: body.Invitation == nil,
+		AdmissionOpen: invitation == nil,
+		Name:          name,
 		Status:        "open", engine: rules.NewGame(rules.UseNotation(rules.UCINotation{})),
 	}
-	if body.CreatorColor == "white" {
+	if creatorColor == "white" {
 		game.White = record.Actor
 		game.whiteSeat = p.seatAt(record, game.ID)
 	} else {
 		game.Black = record.Actor
 		game.blackSeat = p.seatAt(record, game.ID)
 	}
-	if body.Invitation != nil {
-		copy := *body.Invitation
+	if invitation != nil {
+		copy := *invitation
 		game.invitation = &copy
 	}
 	p.ByID[game.ID] = len(p.Games)
@@ -770,7 +797,7 @@ func Decision(ctx context.Context, ws *host.Workspace, record string) (effective
 	for _, candidate := range log.Records {
 		if candidate.ID == record {
 			switch candidate.Schema {
-			case SchemaCreate, SchemaName, SchemaJoin, SchemaMove, SchemaResign, SchemaDrawOffer, SchemaDrawAccept:
+			case SchemaCreate, SchemaCreateNamed, SchemaName, SchemaJoin, SchemaMove, SchemaResign, SchemaDrawOffer, SchemaDrawAccept:
 				// Re-folding the prefix bounds diagnostics and yields the exact
 				// decision at the record's position.
 				prefix := log
@@ -811,14 +838,26 @@ func encode(value any) ([]byte, error) {
 // Create records a new game. creatorColor is white or black. inviteKey and
 // joinSecret are mutually exclusive; leaving both empty creates an open game.
 func Create(ctx context.Context, ws *host.Workspace, signer ed25519.PrivateKey, creatorColor, inviteKey, joinSecret, idempotencyKey string) (host.Record, error) {
+	body, err := createPayload(creatorColor, inviteKey, joinSecret)
+	if err != nil {
+		return host.Record{}, err
+	}
+	payload, err := encode(body)
+	if err != nil {
+		return host.Record{}, err
+	}
+	return ws.Append(ctx, signer, host.Act{Schema: SchemaCreate, Payload: payload, IdempotencyKey: idempotencyKey})
+}
+
+func createPayload(creatorColor, inviteKey, joinSecret string) (CreatePayload, error) {
 	if creatorColor != "white" && creatorColor != "black" {
-		return host.Record{}, errors.New("creator color must be white or black")
+		return CreatePayload{}, errors.New("creator color must be white or black")
 	}
 	if inviteKey != "" && joinSecret != "" {
-		return host.Record{}, errors.New("invite key and join secret are mutually exclusive")
+		return CreatePayload{}, errors.New("invite key and join secret are mutually exclusive")
 	}
 	if inviteKey != "" && !validActorFingerprint(inviteKey) {
-		return host.Record{}, errors.New("invite key must be a lowercase SHA-256 fingerprint")
+		return CreatePayload{}, errors.New("invite key must be a lowercase SHA-256 fingerprint")
 	}
 	body := CreatePayload{CreatorColor: creatorColor}
 	if inviteKey != "" {
@@ -828,58 +867,33 @@ func Create(ctx context.Context, ws *host.Workspace, signer ed25519.PrivateKey, 
 		digest := sha256.Sum256([]byte(joinSecret))
 		body.Invitation = &Invitation{SecretHash: hex.EncodeToString(digest[:])}
 	}
-	payload, err := encode(body)
-	if err != nil {
-		return host.Record{}, err
-	}
-	return ws.Append(ctx, signer, host.Act{Schema: SchemaCreate, Payload: payload, IdempotencyKey: idempotencyKey})
+	return body, nil
 }
 
-// CreateNamed creates a v0 game and, when requested, follows it with a
-// display-only naming act. Keeping name out of chess/create@0 preserves that
-// schema's exact bytes and judgments for older folds.
+// CreateNamed records a named game in one act. Keeping the combined vocabulary
+// separate preserves the exact bytes and judgments of create@0 and name@0.
 func CreateNamed(ctx context.Context, ws *host.Workspace, signer ed25519.PrivateKey, name, creatorColor, inviteKey, joinSecret, idempotencyKey string) (host.Record, error) {
-	if name != "" && invalidText(name) {
+	if name == "" {
+		return Create(ctx, ws, signer, creatorColor, inviteKey, joinSecret, idempotencyKey)
+	}
+	if invalidText(name) {
 		return host.Record{}, errors.New("name must be one line of at most 256 bytes")
 	}
-	created, err := Create(ctx, ws, signer, creatorColor, inviteKey, joinSecret, idempotencyKey)
-	if err != nil || name == "" {
-		return created, err
-	}
-	payload, err := encode(NamePayload{Game: created.ID, Name: name})
+	create, err := createPayload(creatorColor, inviteKey, joinSecret)
 	if err != nil {
 		return host.Record{}, err
 	}
-	nameIdempotency := nameIdempotencyKey(idempotencyKey)
-	named, err := ws.Append(ctx, signer, host.Act{
-		Schema: SchemaName, Payload: payload, RestsOn: []string{created.ID}, IdempotencyKey: nameIdempotency,
+	payload, err := encode(CreateNamedPayload{
+		CreatorColor: create.CreatorColor,
+		Invitation:   create.Invitation,
+		Name:         name,
 	})
 	if err != nil {
 		return host.Record{}, err
 	}
-	effective, found, reason, err := Decision(ctx, ws, named.ID)
-	if err != nil {
-		return host.Record{}, err
-	}
-	if !found || !effective {
-		if reason == "" {
-			reason = "name act was not accepted"
-		}
-		return host.Record{}, errors.New(reason)
-	}
-	return created, nil
-}
-
-// nameIdempotencyKey gives the follow-up name act its own retry identity
-// without extending a caller key that may already be at the host's bound.
-// The NUL terminates the fixed domain inside the digest; it is never emitted
-// in the host-visible key.
-func nameIdempotencyKey(callerKey string) string {
-	if callerKey == "" {
-		return ""
-	}
-	digest := sha256.Sum256([]byte("gitseq-chess/chess-name-idempotency@0\x00" + callerKey))
-	return "chess/name@0:" + hex.EncodeToString(digest[:])
+	return ws.Append(ctx, signer, host.Act{
+		Schema: SchemaCreateNamed, Payload: payload, IdempotencyKey: idempotencyKey,
+	})
 }
 
 // Join records an attempt to take the open opponent seat.

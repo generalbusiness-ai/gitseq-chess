@@ -569,7 +569,7 @@ func decodeArguments(data json.RawMessage, target any) error {
 func actionResult(ctx context.Context, workspace *host.Workspace, record host.Record) (map[string]any, error) {
 	effective, found, reason, err := application.Decision(ctx, workspace, record.ID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("record %s was durably appended, but its decision could not be read: %w", record.ID, err)
 	}
 	result := map[string]any{"record": record.ID, "effective": effective}
 	if !found {

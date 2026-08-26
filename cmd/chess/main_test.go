@@ -104,6 +104,36 @@ func TestCommandsInitializeAndPlayThroughThePublicHost(t *testing.T) {
 	}
 }
 
+func TestActionResultSurfacesDurableRecordWhenDecisionReadFails(t *testing.T) {
+	requireWritableKeyCustody(t)
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "decision-read-failure")
+	if err := run(ctx, []string{"init", "--repo", repo}, io.Discard, bytes.NewReader(nil)); err != nil {
+		t.Fatal(err)
+	}
+	workspace, signer, err := openWriter(ctx, &commonFlags{repo: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := application.CreateNamed(ctx, workspace, signer, "Durable name", "white", "", "", "read-failure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := actionResult(canceled, workspace, record); err == nil || !strings.Contains(err.Error(), record.ID) || !strings.Contains(err.Error(), "durably appended") {
+		t.Fatalf("decision read error = %v, want durable record %s", err, record.ID)
+	}
+	_, projection, err := application.OpenProjection(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, ok := projection.GameByID(record.ID)
+	if !ok || game.Name != "Durable name" || !game.AdmissionOpen {
+		t.Fatalf("durable game after read failure = %+v, found %v", game, ok)
+	}
+}
+
 func TestMCPInitializeAndListsTheWholeDurableAndQuerySurface(t *testing.T) {
 	initialized, respond := handleRPC(context.Background(), &commonFlags{}, rpcRequest{
 		JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "initialize",
@@ -487,7 +517,7 @@ func TestEmbeddedUIRendersTheExactFoldedPositionAndSeats(t *testing.T) {
 			t.Errorf("lobby does not contain %q", want)
 		}
 	}
-	for _, forbidden := range []string{"Verified frontier", "Every position comes from the signed log"} {
+	for _, forbidden := range []string{"Verified frontier", "Every position comes from the signed log", "MCP <code>join</code>", "For an open game"} {
 		if strings.Contains(lobby, forbidden) {
 			t.Errorf("lobby still contains retired copy %q", forbidden)
 		}
