@@ -53,7 +53,7 @@ func TestCommandsInitializeAndPlayThroughThePublicHost(t *testing.T) {
 	if err := os.WriteFile(secretFile, []byte("one use\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	created := call("create", "--repo", repo, "--color", "white", "--join-secret-file", secretFile)
+	created := call("create", "--repo", repo, "--name", "First game", "--color", "white", "--join-secret-file", secretFile)
 	game, ok := created["game"].(string)
 	if !ok || game == "" || created["effective"] != true || created["invitation"] == "" {
 		t.Fatalf("create output = %+v", created)
@@ -75,6 +75,10 @@ func TestCommandsInitializeAndPlayThroughThePublicHost(t *testing.T) {
 	if wrongTurn["effective"] != false || wrongTurn["reason"] != "actor does not hold the side to move" {
 		t.Fatalf("wrong-turn output = %+v", wrongTurn)
 	}
+	emptySource := call("move", "--repo", repo, "--game", game, "--move", "e3e4")
+	if emptySource["effective"] != false || !strings.Contains(emptySource["reason"].(string), "the square is empty") {
+		t.Fatalf("empty-source output = %+v", emptySource)
+	}
 	whiteMove := call("move", "--repo", repo, "--game", game, "--move", "e2e4")
 	if whiteMove["effective"] != true {
 		t.Fatalf("white move output = %+v", whiteMove)
@@ -84,7 +88,7 @@ func TestCommandsInitializeAndPlayThroughThePublicHost(t *testing.T) {
 		t.Fatalf("black move output = %+v", blackMove)
 	}
 	board := call("board", "--repo", repo, "--game", game)
-	if board["moves"] != float64(2) || board["turn"] != "w" {
+	if board["name"] != "First game" || board["moves"] != float64(2) || board["turn"] != "w" {
 		t.Fatalf("board output = %+v", board)
 	}
 	resigned := call("resign", "--repo", repo, "--key", bob, "--game", game)
@@ -217,7 +221,7 @@ func TestMCPToolsCallEveryActAndBoundedQueries(t *testing.T) {
 		return structured
 	}
 
-	create := call(alice, "create", map[string]any{"color": "white", "join_secret": "mcp invite"})
+	create := call(alice, "create", map[string]any{"name": "MCP match", "color": "white", "join_secret": "mcp invite"})
 	game, _ := create["game"].(string)
 	if game == "" {
 		// Tool create returns record; a create record is the game identifier.
@@ -239,7 +243,7 @@ func TestMCPToolsCallEveryActAndBoundedQueries(t *testing.T) {
 	}
 	board := call(alice, "show_board", map[string]any{"game": game})
 	shown, ok := board["game"].(application.Game)
-	if !ok || shown.LastMoveUCI != "e2e4" {
+	if !ok || shown.Name != "MCP match" || shown.LastMoveUCI != "e2e4" {
 		t.Fatalf("board = %+v", board)
 	}
 	if offered := call(alice, "draw_offer", map[string]any{"game": game}); offered["effective"] != true {
@@ -436,7 +440,7 @@ func TestEmbeddedUIRendersTheExactFoldedPositionAndSeats(t *testing.T) {
 		return decoded
 	}
 	call("init", "--repo", repo)
-	created := call("create", "--repo", repo, "--color", "white")
+	created := call("create", "--repo", repo, "--name", "Opening lesson", "--color", "white")
 	gameID := created["game"].(string)
 	bob := filepath.Join(t.TempDir(), "bob.key")
 	call("join", "--repo", repo, "--key", bob, "--game", gameID)
@@ -445,6 +449,7 @@ func TestEmbeddedUIRendersTheExactFoldedPositionAndSeats(t *testing.T) {
 	if refused["effective"] != false {
 		t.Fatalf("wrong-turn move unexpectedly effective: %+v", refused)
 	}
+	openID := call("create", "--repo", repo, "--name", "Agent match", "--color", "white")["game"].(string)
 
 	_, projection, err := application.OpenProjection(ctx, repo)
 	if err != nil {
@@ -463,9 +468,14 @@ func TestEmbeddedUIRendersTheExactFoldedPositionAndSeats(t *testing.T) {
 		t.Fatalf("lobby status = %d: %s", lobbyResponse.Code, lobbyResponse.Body.String())
 	}
 	lobby := lobbyResponse.Body.String()
-	for _, want := range []string{projection.Head, url.QueryEscape(gameID), "playing", "e2e4"} {
+	for _, want := range []string{projection.Head, url.QueryEscape(gameID), "playing", "e2e4", "Opening lesson", "Agent match", "durable games: chess", ">Lobby<", "GitHub repository"} {
 		if !strings.Contains(lobby, want) {
 			t.Errorf("lobby does not contain %q", want)
+		}
+	}
+	for _, forbidden := range []string{"Verified frontier", "Every position comes from the signed log"} {
+		if strings.Contains(lobby, forbidden) {
+			t.Errorf("lobby still contains retired copy %q", forbidden)
 		}
 	}
 	if csp := lobbyResponse.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") || strings.Contains(csp, "unsafe-inline") {
@@ -481,13 +491,26 @@ func TestEmbeddedUIRendersTheExactFoldedPositionAndSeats(t *testing.T) {
 	page := gameResponse.Body.String()
 	for _, want := range []string{
 		projection.Head, game.ID, game.White, game.Black, game.FEN,
-		`data-square="e4" aria-label="white pawn at e4"><span aria-hidden="true">♙</span>`,
-		`data-square="e2" aria-label="empty at e2"><span aria-hidden="true"></span>`,
-		"Read-only view",
+		`data-square="e4" title="e4" aria-label="white pawn at e4"><span aria-hidden="true">♙</span>`,
+		`data-square="e2" title="e2" aria-label="empty at e2"><span aria-hidden="true"></span>`,
+		"read-only board", "Opening lesson", ">Lobby</a>", "No chat messages yet.",
 		"Refused recorded acts", "actor does not hold the side to move",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("game page does not contain %q", want)
+		}
+	}
+	if strings.Contains(page, "Verified frontier") || strings.Contains(page, "No messages in this process-local room.") {
+		t.Error("game page still contains retired frontier or chat copy")
+	}
+
+	openRequest := httptest.NewRequest(http.MethodGet, "/game?game="+url.QueryEscape(openID), nil)
+	openResponse := httptest.NewRecorder()
+	handler.ServeHTTP(openResponse, openRequest)
+	openPage := openResponse.Body.String()
+	for _, want := range []string{"This game has an open seat", "gitseq-chess MCP", "join", openID} {
+		if !strings.Contains(openPage, want) {
+			t.Errorf("open-game help does not contain %q", want)
 		}
 	}
 
@@ -571,6 +594,42 @@ func TestEmbeddedBrowserAssetsHaveNoSigningKeySurface(t *testing.T) {
 			if !strings.Contains(body, `generateKey({name: "Ed25519"}, false`) || !strings.Contains(body, "/v1/live/observe") {
 				t.Error("browser JavaScript does not use an in-memory non-exportable live key and separate live observation")
 			}
+			for _, want := range []string{"No chat messages yet.", "No valid move is available from", "showModal"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("browser JavaScript does not contain %q", want)
+				}
+			}
+			for _, forbidden := range []string{"The process-local live room restarted. Its transient history was cleared.", "The fold allows no move from that square."} {
+				if strings.Contains(body, forbidden) {
+					t.Errorf("browser JavaScript still contains retired copy %q", forbidden)
+				}
+			}
+		} else {
+			body := response.Body.String()
+			for _, want := range []string{"grid-template-rows: repeat(8", "aspect-ratio: 1", "resize: both"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("browser CSS does not enforce %q", want)
+				}
+			}
+		}
+	}
+}
+
+func TestREADMEWalkthroughCreatesKeysNamesAJoinedGameAndPlays(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readme := string(source)
+	for _, want := range []string{
+		"There is no separate\nkey-generation command",
+		`--name "First game"`,
+		"--key bob.key --game '<game-id>'",
+		"--move e2e4",
+		"--key bob.key --game '<game-id>' --move e7e5",
+	} {
+		if !strings.Contains(readme, want) {
+			t.Errorf("first-game walkthrough does not contain %q", want)
 		}
 	}
 }

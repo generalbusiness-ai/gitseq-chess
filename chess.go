@@ -61,6 +61,7 @@ type Invitation struct {
 
 type CreatePayload struct {
 	CreatorColor string      `json:"creator_color"`
+	Name         string      `json:"name,omitempty"`
 	Invitation   *Invitation `json:"invitation,omitempty"`
 }
 
@@ -102,6 +103,7 @@ type Projection struct {
 // identifiers are public log data; no private key material is retained here.
 type Game struct {
 	ID          string `json:"id"`
+	Name        string `json:"name,omitempty"`
 	CreatedAt   int64  `json:"created_at"`
 	Creator     string `json:"creator"`
 	White       string `json:"white,omitempty"`
@@ -184,6 +186,10 @@ func (p *Projection) foldCreate(record host.Record) {
 		p.refuse(record, "", "creator_color must be white or black")
 		return
 	}
+	if body.Name != "" && invalidText(body.Name) {
+		p.refuse(record, "", "name must be one line of at most 256 bytes")
+		return
+	}
 	if len(record.RestsOn) != 0 {
 		p.refuse(record, "", "create must not rest on another record")
 		return
@@ -207,7 +213,7 @@ func (p *Projection) foldCreate(record host.Record) {
 		}
 	}
 	game := Game{
-		ID: record.ID, CreatedAt: record.Timestamp, Creator: record.Actor,
+		ID: record.ID, Name: body.Name, CreatedAt: record.Timestamp, Creator: record.Actor,
 		Status: "open", engine: rules.NewGame(rules.UseNotation(rules.UCINotation{})),
 	}
 	if body.CreatorColor == "white" {
@@ -316,7 +322,13 @@ func (p *Projection) foldMove(record host.Record) {
 		return
 	}
 	if err := game.engine.MoveStr(body.Move); err != nil {
-		p.refuse(record, body.Game, "move is illegal in the current position")
+		reason := "move is illegal in the current position"
+		if detail := LegalSelection(*game, body.Move[:2]).Reason; detail != "" {
+			reason += ": " + detail
+		} else {
+			reason += fmt.Sprintf(": destination %s is not valid from %s", body.Move[2:], body.Move[:2])
+		}
+		p.refuse(record, body.Game, reason)
 		return
 	}
 	matched.commit()
@@ -602,8 +614,34 @@ func sameAnchoredSeat(left, right seat) bool {
 // LegalDestinations returns the fold engine's legal destinations from one
 // square. It never trusts a client-side rules implementation.
 func LegalDestinations(game Game, from string) []string {
-	if game.Status != "playing" || game.engine == nil || len(from) != 2 || from != strings.ToLower(from) {
-		return []string{}
+	return LegalSelection(game, from).Destinations
+}
+
+// LegalSelection reports legal destinations and, when none exist, the reason
+// the rules engine can establish from the current position.
+type LegalSelectionResult struct {
+	Destinations []string
+	Reason       string
+}
+
+func LegalSelection(game Game, from string) LegalSelectionResult {
+	if game.Status != "playing" || game.engine == nil {
+		return LegalSelectionResult{Destinations: []string{}, Reason: "the game is not in play"}
+	}
+	if len(from) != 2 || from != strings.ToLower(from) || from[0] < 'a' || from[0] > 'h' || from[1] < '1' || from[1] > '8' {
+		return LegalSelectionResult{Destinations: []string{}, Reason: "the source square is invalid"}
+	}
+	square := rules.NewSquare(rules.File(from[0]-'a'), rules.Rank(from[1]-'1'))
+	piece := game.engine.Position().Board().Piece(square)
+	if piece == rules.NoPiece {
+		return LegalSelectionResult{Destinations: []string{}, Reason: "the square is empty"}
+	}
+	turn := game.engine.Position().Turn()
+	if piece.Color() != turn {
+		return LegalSelectionResult{
+			Destinations: []string{},
+			Reason:       fmt.Sprintf("the square holds a %s piece, but %s is to move", colorName(piece.Color()), colorName(turn)),
+		}
 	}
 	var result []string
 	for _, move := range game.engine.ValidMoves() {
@@ -616,7 +654,20 @@ func LegalDestinations(game Game, from string) []string {
 		}
 	}
 	slices.Sort(result)
-	return result
+	if len(result) == 0 {
+		return LegalSelectionResult{
+			Destinations: []string{},
+			Reason:       "the piece is blocked, pinned, or moving it would leave the king in check",
+		}
+	}
+	return LegalSelectionResult{Destinations: result}
+}
+
+func colorName(color rules.Color) string {
+	if color == rules.Black {
+		return "black"
+	}
+	return "white"
 }
 
 // GameByID returns a copy suitable for display plus whether it exists.
@@ -714,6 +765,12 @@ func encode(value any) ([]byte, error) {
 // Create records a new game. creatorColor is white or black. inviteKey and
 // joinSecret are mutually exclusive; leaving both empty creates an open game.
 func Create(ctx context.Context, ws *host.Workspace, signer ed25519.PrivateKey, creatorColor, inviteKey, joinSecret, idempotencyKey string) (host.Record, error) {
+	return CreateNamed(ctx, ws, signer, "", creatorColor, inviteKey, joinSecret, idempotencyKey)
+}
+
+// CreateNamed records a new game with optional display text. The record ID
+// remains the durable game identifier.
+func CreateNamed(ctx context.Context, ws *host.Workspace, signer ed25519.PrivateKey, name, creatorColor, inviteKey, joinSecret, idempotencyKey string) (host.Record, error) {
 	if creatorColor != "white" && creatorColor != "black" {
 		return host.Record{}, errors.New("creator color must be white or black")
 	}
@@ -723,7 +780,10 @@ func Create(ctx context.Context, ws *host.Workspace, signer ed25519.PrivateKey, 
 	if inviteKey != "" && !validActorFingerprint(inviteKey) {
 		return host.Record{}, errors.New("invite key must be a lowercase SHA-256 fingerprint")
 	}
-	body := CreatePayload{CreatorColor: creatorColor}
+	if name != "" && invalidText(name) {
+		return host.Record{}, errors.New("name must be one line of at most 256 bytes")
+	}
+	body := CreatePayload{CreatorColor: creatorColor, Name: name}
 	if inviteKey != "" {
 		body.Invitation = &Invitation{OpponentKey: inviteKey}
 	}

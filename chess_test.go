@@ -194,6 +194,29 @@ func TestLegalDestinationsComeFromTheFoldEngine(t *testing.T) {
 	if got := chess.LegalDestinations(game, "E2"); len(got) != 0 {
 		t.Fatalf("non-canonical source = %v, want none", got)
 	}
+	if got := chess.LegalSelection(game, "e4"); got.Reason != "the square is empty" {
+		t.Fatalf("empty-square selection = %+v", got)
+	}
+	if got := chess.LegalSelection(game, "e7"); got.Reason != "the square holds a black piece, but white is to move" {
+		t.Fatalf("wrong-side selection = %+v", got)
+	}
+	if got := chess.LegalSelection(game, "a1"); got.Reason != "the piece is blocked, pinned, or moving it would leave the king in check" {
+		t.Fatalf("blocked-piece selection = %+v", got)
+	}
+}
+
+func TestCreateNameIsProjectedAndInvalidNamesAreRefused(t *testing.T) {
+	b := &logBuilder{}
+	b.add("named", white, chess.SchemaCreate, chess.CreatePayload{CreatorColor: "white", Name: "Coffeehouse"})
+	b.add("bad-name", black, chess.SchemaCreate, chess.CreatePayload{CreatorColor: "black", Name: "two\nlines"})
+	projection := b.fold()
+	game, ok := projection.GameByID("named")
+	if !ok || game.Name != "Coffeehouse" {
+		t.Fatalf("named game = %+v, found %v", game, ok)
+	}
+	if _, ok := projection.GameByID("bad-name"); ok || projection.RefusedTotal != 1 || projection.Refused[0].Reason != "name must be one line of at most 256 bytes" {
+		t.Fatalf("invalid name projection = %+v", projection)
+	}
 }
 
 func TestFoldComputesCheckmateWithoutAResultAct(t *testing.T) {

@@ -23,13 +23,15 @@ code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 }
 
 .wordmark { font-weight: 800; letter-spacing: .02em; text-decoration: none; }
-.frontier { display: flex; gap: .5rem; min-width: 0; color: #c9d4ca; font-size: .78rem; }
-.frontier code { max-width: 24rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.shell { width: min(72rem, calc(100% - 2rem)); margin: 0 auto; padding: clamp(2rem, 7vw, 5rem) 0; }
+.toolbar { display: flex; align-items: center; gap: .5rem; }
+.icon-button { display: grid; place-items: center; width: 2.25rem; height: 2.25rem; border: 1px solid rgb(255 255 255 / 28%); border-radius: 50%; padding: .5rem; background: transparent; color: inherit; font: inherit; font-weight: 800; text-decoration: none; cursor: pointer; }
+.icon-button:hover, .icon-button:focus-visible { border-color: #f7f2e8; outline: 0; }
+.icon-button svg { width: 100%; height: 100%; fill: currentcolor; }
+.shell { width: min(82rem, calc(100% - 2rem)); margin: 0 auto; padding: clamp(2rem, 6vw, 4rem) 0; }
 .intro { max-width: 48rem; margin-bottom: 2.5rem; }
-.eyebrow { color: #636d65; font-size: .78rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.eyebrow, .breadcrumb { color: #636d65; font-size: .78rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.breadcrumb a { text-underline-offset: .2rem; }
 h1 { max-width: 16ch; margin: .4rem 0 1rem; font-family: ui-serif, Georgia, serif; font-size: clamp(2.2rem, 6vw, 4.8rem); font-weight: 600; line-height: .98; }
-.intro > p:last-child { max-width: 42rem; color: #5e5b54; font-size: 1.05rem; line-height: 1.6; }
 
 .game-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(19rem, 100%), 1fr)); gap: 1rem; margin: 0; padding: 0; list-style: none; }
 .game-card { display: grid; gap: .8rem; min-height: 12rem; padding: 1.25rem; border: 1px solid #d2cbbb; border-radius: .75rem; background: #fffdf7; box-shadow: 0 .25rem 1rem rgb(31 42 35 / 7%); text-decoration: none; }
@@ -43,10 +45,11 @@ h1 { max-width: 16ch; margin: .4rem 0 1rem; font-family: ui-serif, Georgia, seri
 .empty h2 { margin-top: 0; }
 .refusals { margin-top: 2rem; color: #7f322d; }
 
-.game-shell { display: grid; grid-template-columns: minmax(15rem, 25rem) minmax(20rem, 38rem); gap: clamp(2rem, 7vw, 6rem); align-items: start; }
-.game-summary h1 { font-size: clamp(2rem, 5vw, 4rem); text-transform: capitalize; }
+.game-summary { margin-bottom: 2rem; }
+.game-summary h1 { font-size: clamp(2rem, 5vw, 4rem); }
+.game-status { color: #5e5b54; font-weight: 800; text-transform: capitalize; }
 .outcome { font-size: 1.2rem; text-transform: capitalize; }
-.seats { display: grid; gap: 1rem; margin: 2rem 0; }
+.seats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; max-width: 58rem; margin: 2rem 0 0; }
 .seats div { padding-top: .75rem; border-top: 1px solid #cfc8b8; }
 .seats dt { margin-bottom: .35rem; color: #6a675e; font-size: .72rem; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
 .seats dd { margin: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -57,7 +60,8 @@ h1 { max-width: 16ch; margin: .4rem 0 1rem; font-family: ui-serif, Georgia, seri
 .game-refusals h2 { margin: 0 0 .4rem; font-family: ui-serif, Georgia, serif; font-size: 1rem; }
 .game-refusals p, .game-refusals ol { margin: .4rem 0; font-size: .82rem; line-height: 1.4; }
 .game-refusals code { display: block; overflow: hidden; margin-top: .15rem; font-size: .65rem; text-overflow: ellipsis; white-space: nowrap; }
-.live-panel { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #cfc8b8; }
+.play-area { display: grid; grid-template-columns: minmax(20rem, 42rem) minmax(18rem, 1fr); gap: clamp(1.5rem, 4vw, 3rem); align-items: start; }
+.live-panel { min-width: 18rem; min-height: 24rem; max-width: 100%; max-height: 48rem; overflow: auto; resize: both; padding: 1.25rem; border: 1px solid #cfc8b8; border-radius: .75rem; background: #fffdf7; }
 .live-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .live-heading h2, .live-panel h3 { font-family: ui-serif, Georgia, serif; }
 .live-heading h2 { margin: 0; }
@@ -73,8 +77,8 @@ h1 { max-width: 16ch; margin: .4rem 0 1rem; font-family: ui-serif, Georgia, seri
 .chat-form div { display: flex; gap: .5rem; }
 .chat-form input { min-width: 0; flex: 1; border: 1px solid #afa998; border-radius: 2rem; padding: .65rem .85rem; background: #fffdf7; }
 .board-panel { width: 100%; }
-.board { display: grid; grid-template-columns: repeat(8, 1fr); overflow: hidden; width: 100%; aspect-ratio: 1; border: .5rem solid #202b25; border-radius: .35rem; box-shadow: 0 1rem 2.5rem rgb(31 42 35 / 18%); }
-.square { display: grid; place-items: center; min-width: 0; border: 0; padding: 0; color: #171b18; font-size: clamp(1.5rem, 6vw, 3.8rem); line-height: 1; cursor: pointer; }
+.board { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); grid-template-rows: repeat(8, minmax(0, 1fr)); overflow: hidden; width: 100%; aspect-ratio: 1; border: .5rem solid #202b25; border-radius: .35rem; box-shadow: 0 1rem 2.5rem rgb(31 42 35 / 18%); }
+.square { display: grid; place-items: center; min-width: 0; min-height: 0; width: 100%; aspect-ratio: 1; border: 0; padding: 0; color: #171b18; font-size: clamp(1.5rem, 5vw, 3.8rem); line-height: 1; cursor: pointer; }
 .square.light { background: #e8ddc2; }
 .square.dark { background: #779078; }
 .square:hover, .square:focus-visible { box-shadow: inset 0 0 0 .25rem #f2b84b; outline: 0; }
@@ -84,11 +88,19 @@ h1 { max-width: 16ch; margin: .4rem 0 1rem; font-family: ui-serif, Georgia, seri
 details { margin-top: 1.25rem; color: #5e5b54; }
 details code { display: block; overflow-wrap: anywhere; margin-top: .75rem; font-size: .72rem; }
 
+.help-dialog { width: min(34rem, calc(100% - 2rem)); border: 0; border-radius: .75rem; padding: 1.5rem 2rem 2rem; background: #fffdf7; color: #24221d; box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 35%); }
+.help-dialog::backdrop { background: rgb(17 24 20 / 68%); }
+.help-dialog h2 { margin: .25rem 2rem 1rem 0; font-family: ui-serif, Georgia, serif; font-size: 2rem; }
+.help-dialog p { line-height: 1.55; }
+.help-dialog code { overflow-wrap: anywhere; }
+.help-dialog form { float: right; }
+.dialog-close { border: 0; background: transparent; color: #24221d; font-size: 1.8rem; cursor: pointer; }
+.join-instruction { padding: 1rem; border-left: .3rem solid #2a7d46; background: #e2eee2; }
+
 @media (max-width: 760px) {
-  .frontier { display: none; }
-  .game-shell { grid-template-columns: 1fr; }
-  .game-summary { order: 2; }
-  .board-panel { order: 1; }
+  .play-area { grid-template-columns: 1fr; }
+  .live-panel { width: 100%; min-width: 0; resize: vertical; }
+  .seats { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: no-preference) {
