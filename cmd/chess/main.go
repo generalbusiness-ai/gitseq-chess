@@ -12,12 +12,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -264,81 +264,32 @@ func runServe(ctx context.Context, args []string, stdout io.Writer) error {
 	if err := parseNoPositionals(set, args); err != nil {
 		return err
 	}
-	server := &http.Server{
-		Addr: *listen, Handler: newReadHandler(ctx, common.repo), ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
+	if !validLoopbackListen(*listen) {
+		return errors.New("serve listen address must use localhost or a loopback IP")
 	}
+	server := newChessHTTPServer(*listen, newReadHandler(ctx, common.repo))
 	fmt.Fprintln(stdout, "http://"+*listen)
 	return server.ListenAndServe()
 }
 
-func newReadHandler(ctx context.Context, repo string) http.Handler {
-	mux := http.NewServeMux()
-	read := func() (application.Projection, error) {
-		_, projection, err := application.OpenProjection(ctx, repo)
-		return projection, err
+func newChessHTTPServer(address string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr: address, Handler: handler,
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second,
+		WriteTimeout: liveWriteTimeout, IdleTimeout: 45 * time.Second, MaxHeaderBytes: 16 << 10,
 	}
-	mux.HandleFunc("GET /v1/games", func(w http.ResponseWriter, request *http.Request) {
-		projection, err := read()
-		if err != nil {
-			http.Error(w, "repository is unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		limit := 100
-		if stated := request.URL.Query().Get("limit"); stated != "" {
-			parsed, parseErr := strconv.Atoi(stated)
-			if parseErr != nil || parsed < 1 || parsed > 100 {
-				http.Error(w, "limit must be between 1 and 100", http.StatusBadRequest)
-				return
-			}
-			limit = parsed
-		}
-		games, next := projection.GamesPage(request.URL.Query().Get("after"), limit)
-		serveJSON(w, map[string]any{"games": games, "next": next, "head": projection.Head})
-	})
-	mux.HandleFunc("GET /v1/board", func(w http.ResponseWriter, request *http.Request) {
-		projection, err := read()
-		if err != nil {
-			http.Error(w, "repository is unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		game, ok := projection.GameByID(request.URL.Query().Get("game"))
-		if !ok {
-			http.Error(w, "game does not exist", http.StatusNotFound)
-			return
-		}
-		serveJSON(w, map[string]any{"game": game, "head": projection.Head})
-	})
-	mux.HandleFunc("GET /v1/legal", func(w http.ResponseWriter, request *http.Request) {
-		projection, err := read()
-		if err != nil {
-			http.Error(w, "repository is unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		game, ok := projection.GameByID(request.URL.Query().Get("game"))
-		if !ok {
-			http.Error(w, "game does not exist", http.StatusNotFound)
-			return
-		}
-		serveJSON(w, map[string]any{"destinations": application.LegalDestinations(game, request.URL.Query().Get("from")), "head": projection.Head})
-	})
-	return securityHeaders(mux)
 }
 
-func securityHeaders(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		next.ServeHTTP(w, request)
-	})
-}
-
-func serveJSON(w http.ResponseWriter, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(value); err != nil {
-		return
+func validLoopbackListen(value string) bool {
+	host, _, err := net.SplitHostPort(value)
+	if err != nil || host == "" {
+		return false
 	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 type rpcRequest struct {

@@ -6,9 +6,10 @@ defines the chess vocabulary, folds that verified log into games, and decides
 which recorded acts are effective.
 
 The application is deliberately separate from gitseq. It imports only the
-public `host` and `host/identity` packages, and pins the exact gitseq commit it
-was built against in `go.mod`. The fold is pure: it uses record order and signed
-sequencer timestamps, with no network, local clock, or mutable cache.
+public `host`, `host/identity`, and `host/live` packages, and pins the exact
+gitseq commit it was built against in `go.mod`. The fold is pure: it uses record
+order and signed sequencer timestamps, with no network, local clock, or mutable
+cache.
 
 ## Run locally
 
@@ -20,6 +21,10 @@ mkdir game-data
 ./chess init --repo game-data
 ./chess serve --repo game-data
 ```
+
+`serve` listens on `127.0.0.1:8080` by default. You may choose another
+loopback address with `--listen`; the command refuses non-loopback addresses so
+the local live-room service cannot be exposed accidentally.
 
 `init` creates the repository's binding, sequencer key, and first local player
 key. Board, HTTP, and MCP responses never include key material.
@@ -98,16 +103,41 @@ changes identity between being named and being opened, and any publication that
 is not exclusive. The program pins the operator-chosen parent after opening it,
 but does not validate that parent's permissions.
 
-## Read service and MCP
+## Web view, read service, and MCP
 
-`chess serve` exposes bounded, read-only JSON endpoints:
+`chess serve` prints the address of an embedded, read-only web interface. Its
+lobby and game pages render only the current durable fold. Selecting a square
+asks the fold's rules engine for legal destinations; the browser does not carry
+a second chess implementation. The page reloads when the verified frontier
+moves. A separate process-local live room shows watchers, signed chat, and
+legal motion previews. Those previews never move the durable board.
+
+Watching is keyless. Joining presence or chat creates a non-exportable
+Ed25519 private key in browser memory, proves possession to the server, and
+keeps the server-minted lease credential in memory too. Reloading or closing
+the tab loses both. The server derives white, black, or watcher status from the
+folded seats through `Projection.SeatFor`; the browser cannot claim a role.
+That query is a live preview at the last-record instant. It is position-exact
+and timestamp-optimistic: it may say yes where a later append refuses on
+expiry, never the reverse. Durable move acceptance remains the judgment. Live
+state has its own cursor, resets when the process restarts, and is never
+presented as durable history.
+Drag and submit hints are bounded presence values, not chat history, and vanish
+when the lease renews or expires. A newly generated browser key is normally a
+watcher for CLI-created games; the page can receive and animate hints from an
+authorized seated session, while durable browser seat custody and submission
+remain outside this service.
+
+The same server exposes bounded, read-only JSON endpoints:
 
 - `GET /v1/games?limit=100&after=<game>`
 - `GET /v1/board?game=<game>`
 - `GET /v1/legal?game=<game>&from=e2`
 
-The browser write path and UI belong to later work. This service therefore does
-not accept private keys or unsigned write requests over HTTP.
+The durable browser write path belongs to later work. This service accepts only
+the public half and signatures for its ephemeral live room; it never receives
+a private key and has no HTTP endpoint for durable chess acts. Use the command
+line or MCP adapter for signed moves, joins, draws, and resignations.
 
 `chess mcp --repo game-data --key agent.key` runs a newline-delimited JSON-RPC
 MCP adapter on standard input and output. It offers bounded game listing, board

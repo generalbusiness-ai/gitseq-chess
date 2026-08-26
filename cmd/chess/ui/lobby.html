@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gitseq Chess</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body data-head="{{.Head}}" data-view="lobby">
+  <header class="masthead">
+    <a class="wordmark" href="/">Gitseq Chess</a>
+    <span class="frontier" title="{{.Head}}">Verified frontier <code>{{.Head}}</code></span>
+  </header>
+  <main class="shell">
+    <section class="intro">
+      <p class="eyebrow">Durable games</p>
+      <h1>Every position comes from the signed log.</h1>
+      <p>The server replays the same fold used by the command line. This view cannot sign or submit moves.</p>
+    </section>
+    {{if .Games}}
+    <ol class="game-list">
+      {{range .Games}}
+      <li>
+        <a class="game-card" href="/game?game={{urlquery .ID}}">
+          <span class="game-state {{.Status}}">{{.Status}}</span>
+          <strong>{{if .LastMoveUCI}}{{.LastMoveUCI}}{{else}}New game{{end}}</strong>
+          <span>{{if .White}}White seated{{else}}White open{{end}} · {{if .Black}}Black seated{{else}}Black open{{end}}</span>
+          <code title="{{.ID}}">{{.ID}}</code>
+        </a>
+      </li>
+      {{end}}
+    </ol>
+    {{else}}
+    <section class="empty">
+      <h2>No games yet</h2>
+      <p>Create one with the command line or MCP adapter. It will appear here after the durable record lands.</p>
+    </section>
+    {{end}}
+    {{if .RefusedTotal}}<p class="refusals">The fold has refused {{.RefusedTotal}} recorded act{{if ne .RefusedTotal 1}}s{{end}}.</p>{{end}}
+  </main>
+</body>
+</html>

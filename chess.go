@@ -94,7 +94,8 @@ type Projection struct {
 	RefusedTotal int            `json:"refused_total"`
 	ByID         map[string]int `json:"-"`
 
-	identities *identity.Resolution
+	identities   *identity.Resolution
+	lastRecordID string
 }
 
 // Game is one game's complete current state. Actor fingerprints and record
@@ -147,6 +148,9 @@ func Fold(log host.Log) Projection {
 	p := Projection{
 		Genesis: log.Genesis, Head: log.Head, Depth: log.Depth,
 		ByID: map[string]int{}, identities: identity.Resolve(log),
+	}
+	if len(log.Records) != 0 {
+		p.lastRecordID = log.Records[len(log.Records)-1].ID
 	}
 	for _, record := range log.Records {
 		switch record.Schema {
@@ -301,11 +305,8 @@ func (p *Projection) foldMove(record host.Record) {
 		p.refuse(record, body.Game, "move does not continue the accepted move chain")
 		return
 	}
-	side := "white"
-	if game.engine.Position().Turn() == rules.Black {
-		side = "black"
-	}
-	matched := p.seatSide(game, record)
+	side := SideToMove(*game)
+	matched := p.seatSide(game, record.Actor, p.identities.LookupAt(record.ID))
 	if !matched.allowed() || matched.side != side {
 		p.refuse(record, body.Game, "actor does not hold the side to move")
 		return
@@ -345,7 +346,7 @@ func (p *Projection) foldResign(record host.Record) {
 		p.refuse(record, body.Game, "resignation does not name the current move chain")
 		return
 	}
-	matched := p.seatSide(game, record)
+	matched := p.seatSide(game, record.Actor, p.identities.LookupAt(record.ID))
 	if !matched.allowed() {
 		p.refuse(record, body.Game, "actor holds no seat")
 		return
@@ -374,7 +375,7 @@ func (p *Projection) foldDrawOffer(record host.Record) {
 		p.refuse(record, body.Game, "draw offer does not name the current move chain")
 		return
 	}
-	matched := p.seatSide(game, record)
+	matched := p.seatSide(game, record.Actor, p.identities.LookupAt(record.ID))
 	if !matched.allowed() {
 		p.refuse(record, body.Game, "actor holds no seat")
 		return
@@ -403,7 +404,7 @@ func (p *Projection) foldDrawAccept(record host.Record) {
 		p.refuse(record, body.Game, "draw acceptance does not answer the pending offer")
 		return
 	}
-	matched := p.seatSide(game, record)
+	matched := p.seatSide(game, record.Actor, p.identities.LookupAt(record.ID))
 	if !matched.allowed() || matched.side == game.offeredBy {
 		p.refuse(record, body.Game, "only the other seated player may accept the draw")
 		return
@@ -509,10 +510,9 @@ type sideMatch struct {
 
 func (m sideMatch) commit() { m.seatMatch.commit(m.owner) }
 
-func (p *Projection) seatSide(game *Game, record host.Record) sideMatch {
-	resolved := p.identities.LookupAt(record.ID)
-	white := matchSeat(game.whiteSeat, game.blackSeat, record, resolved, game.ID)
-	black := matchSeat(game.blackSeat, game.whiteSeat, record, resolved, game.ID)
+func (p *Projection) seatSide(game *Game, actor string, resolved identity.Resolved) sideMatch {
+	white := matchSeat(game.whiteSeat, game.blackSeat, actor, resolved, game.ID)
+	black := matchSeat(game.blackSeat, game.whiteSeat, actor, resolved, game.ID)
 	if white.collision || black.collision || white.matched == black.matched {
 		return sideMatch{}
 	}
@@ -530,14 +530,14 @@ func (p *Projection) seatAt(record host.Record, game string) seat {
 	return owner
 }
 
-func matchSeat(owner, other seat, record host.Record, resolved identity.Resolved, game string) seatMatch {
+func matchSeat(owner, other seat, actor string, resolved identity.Resolved, game string) seatMatch {
 	if owner.actor == "" {
 		return seatMatch{}
 	}
 	// An exact seated key belongs to that seat even when its current identity
 	// resolution changes. It must never borrow the opposing seat merely because
 	// it now resolves to that seat's persistent identity.
-	if record.Actor == other.actor {
+	if actor == other.actor {
 		return seatMatch{}
 	}
 	if owner.anchored {
@@ -545,7 +545,7 @@ func matchSeat(owner, other seat, record host.Record, resolved identity.Resolved
 			matched: resolved.Anchored && chessScope(resolved.Scope, game) && sameIdentity(resolved.Identity, owner.identity),
 		}
 	}
-	if record.Actor != owner.actor {
+	if actor != owner.actor {
 		return seatMatch{}
 	}
 	matched := seatMatch{matched: true}
@@ -555,6 +555,33 @@ func matchSeat(owner, other seat, record host.Record, resolved identity.Resolved
 		matched.upgrade = &identity
 	}
 	return matched
+}
+
+// SeatFor previews which seat a fingerprint holds in one game. It is judged
+// at the last record instant, position-exact, timestamp-optimistic; the query
+// is a preview, the append is the judgment; it may say yes where a later
+// append refuses on expiry, never the reverse.
+func (p Projection) SeatFor(gameID, fingerprint string) (side string, ok bool) {
+	game, found := p.GameByID(gameID)
+	if !found || p.identities == nil || p.lastRecordID == "" {
+		return "", false
+	}
+	matched := p.seatSide(&game, fingerprint, p.identities.LookupActorAt(fingerprint, p.lastRecordID))
+	if !matched.allowed() {
+		return "", false
+	}
+	return matched.side, true
+}
+
+// SideToMove reports the fold engine's side-to-move vocabulary.
+func SideToMove(game Game) string {
+	if game.Status != "playing" || game.engine == nil {
+		return ""
+	}
+	if game.engine.Position().Turn() == rules.Black {
+		return "black"
+	}
+	return "white"
 }
 
 func chessScope(scope, game string) bool {

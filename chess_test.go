@@ -49,6 +49,36 @@ func (b *logBuilder) fold() chess.Projection {
 	return chess.Fold(host.Log{Genesis: "genesis", Head: "head", Depth: len(b.records), Records: b.records})
 }
 
+func foldThrough(t *testing.T, log host.Log, record string) chess.Projection {
+	t.Helper()
+	for index := range log.Records {
+		if log.Records[index].ID == record {
+			prefix := log
+			prefix.Records = log.Records[:index+1]
+			prefix.Depth = index + 1
+			prefix.Head = record
+			return chess.Fold(prefix)
+		}
+	}
+	t.Fatalf("record %s is absent from log", record)
+	return chess.Projection{}
+}
+
+func assertSeatForMatchesAct(t *testing.T, projection chess.Projection, game string, act host.Record, wantSide string, wantEffective bool) {
+	t.Helper()
+	refused := false
+	for _, candidate := range projection.Refused {
+		refused = refused || candidate.Record == act.ID
+	}
+	if effective := !refused; effective != wantEffective {
+		t.Fatalf("fold verdict for %s effective = %v, want %v", act.ID, effective, wantEffective)
+	}
+	side, ok := projection.SeatFor(game, act.Actor)
+	if ok != wantEffective || side != wantSide {
+		t.Fatalf("SeatFor(%s, %s) = %q, %v; fold verdict effective = %v, want side %q", game, act.Actor, side, ok, wantEffective, wantSide)
+	}
+}
+
 func joinedGame(t *testing.T) (*logBuilder, chess.Game) {
 	t.Helper()
 	b := &logBuilder{}
@@ -362,6 +392,9 @@ func TestAnchoredSeatRecoveryUsesExactRecordOrder(t *testing.T) {
 		log.Records[index].Timestamp = 1_000
 	}
 	projection := chess.Fold(log)
+	assertSeatForMatchesAct(t, foldThrough(t, log, beforeAnchor.ID), created.ID, beforeAnchor, "", false)
+	assertSeatForMatchesAct(t, foldThrough(t, log, afterAnchor.ID), created.ID, afterAnchor, "white", true)
+	assertSeatForMatchesAct(t, projection, created.ID, afterRevoke, "", false)
 	game, ok := projection.GameByID(created.ID)
 	if !ok || game.Moves != 4 || game.LastMove != blackTwo.ID || game.LastMoveUCI != "b8c6" {
 		t.Fatalf("recovered game = %+v, want four moves ending at black's second move", game)
@@ -470,6 +503,7 @@ func TestExpiredOrWrongScopeAnchorCannotRecoverASeat(t *testing.T) {
 	if _, err := chess.Join(ctx, workspace, blackKey, created.ID, "", "bounded-join"); err != nil {
 		t.Fatal(err)
 	}
+	var attempts []host.Record
 	for _, candidate := range []struct {
 		key      ed25519.PrivateKey
 		scope    string
@@ -488,15 +522,20 @@ func TestExpiredOrWrongScopeAnchorCannotRecoverASeat(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := chess.Move(ctx, workspace, candidate.key, created.ID, candidate.move, "bounded-"+candidate.scope); err != nil {
+		attempt, err := chess.Move(ctx, workspace, candidate.key, created.ID, candidate.move, "bounded-"+candidate.scope)
+		if err != nil {
 			t.Fatal(err)
 		}
+		attempts = append(attempts, attempt)
 	}
 	log, err := workspace.Records(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	projection := chess.Fold(log)
+	for _, attempt := range attempts {
+		assertSeatForMatchesAct(t, foldThrough(t, log, attempt.ID), created.ID, attempt, "", false)
+	}
 	game, _ := projection.GameByID(created.ID)
 	if game.Moves != 0 || projection.RefusedTotal != 2 {
 		t.Fatalf("bounded recovery = game %+v refusals %+v", game, projection.Refused)
@@ -606,6 +645,7 @@ func TestSecondSeatCannotUpgradeToTheFirstSeatsIdentity(t *testing.T) {
 	if projection.RefusedTotal != 1 || projection.Refused[0].Record != blackMove.ID {
 		t.Fatalf("late identity collision refusals = %+v", projection.Refused)
 	}
+	assertSeatForMatchesAct(t, projection, created.ID, blackMove, "", false)
 }
 
 // Mutation witness for every act using the shared two-seat authority check:
@@ -680,6 +720,7 @@ func TestExactSeatedKeyCannotBorrowTheOtherSeatsIdentity(t *testing.T) {
 		game.DrawOffer != drawOffer.ID || projection.RefusedTotal != 0 {
 		t.Fatalf("withdrawn black key did not act as its exact seat: game %+v refusals %+v", game, projection.Refused)
 	}
+	assertSeatForMatchesAct(t, projection, created.ID, drawOffer, "black", true)
 	if _, err := identity.Endorse(ctx, workspace, witnessKey, identity.Anchor{
 		Subject: joined.Actor, Identity: &alice, Scope: "chess:" + created.ID,
 	}); err != nil {
@@ -799,6 +840,7 @@ func TestOpposingExactKeyCannotRecoverAnAnchoredSeat(t *testing.T) {
 	if projection.RefusedTotal != 1 || len(projection.Refused) != 1 || projection.Refused[0].Record != borrowed.ID {
 		t.Fatalf("opposing exact-key refusals = %+v", projection.Refused)
 	}
+	assertSeatForMatchesAct(t, projection, created.ID, borrowed, "", false)
 }
 
 // Mutation witness: committing the late identity upgrade inside the authority
