@@ -193,8 +193,14 @@ line or MCP adapter for signed moves, joins, draws, and resignations.
 `chess mcp --repo game-data --key agent.key` runs a newline-delimited JSON-RPC
 MCP adapter on standard input and output. It offers bounded game listing, board
 and legal-destination queries, plus create, join, move, resign, draw-offer,
-draw-accept, and shared host identity anchor acts. The adapter's process owns
-the chosen key; tool results contain only public record data and fold decisions.
+draw-accept, and shared host identity lifecycle tools. `anchor` reports whether
+the durable endorsement created recovery authority, was refused by the host
+identity fold, or could not be read after append. `list_anchors` lists a bounded
+set of standing anchors filtered by exact subject, scope, or both.
+`revoke_anchor` withdraws an anchor or delegated credential by its record
+identifier and reports whether the withdrawal took force. The adapter's process
+owns the chosen key; tool results contain only public record data and fold
+decisions.
 
 ## Durable rules
 
@@ -232,6 +238,11 @@ the chosen key; tool results contain only public record data and fold decisions.
   game. Anchor, delegation, revocation, and move records that share one signed
   second still take force only in verified log order. Expiry continues to use
   the record's signed timestamp.
+- Identity mutation results come from folding the verified host state after the
+  append, not from assuming that a durable write conferred authority. An
+  endorser without standing still writes an attributable anchor, but `anchor`
+  reports it as refused. A revocation signed by anyone other than the original
+  endorser is likewise durable and refused, and the anchor remains listed.
 
 Run `go test -count=1 ./...` for fold, mutation-witness, invitation, pagination,
 and real external-host integration coverage.
