@@ -13,6 +13,60 @@ import (
 	rules "github.com/notnil/chess"
 )
 
+func TestSeatIdentityThresholdAcceptsEveryCurrentAnchorRung(t *testing.T) {
+	for _, vouching := range []identity.Vouching{identity.Witnessed, identity.SelfSigned} {
+		for _, verification := range []identity.Verification{identity.LiveLookup, identity.InLog} {
+			resolved := identity.Resolved{
+				Anchored: true, Scope: "chess", Vouching: vouching, Verification: verification,
+			}
+			if !seatAnchorQualifies(resolved, "game") {
+				t.Errorf("current anchor rung %s/%s did not meet the seat threshold", vouching, verification)
+			}
+		}
+	}
+}
+
+func TestSeatIdentityThresholdRequiresAnchorScopeAndReviewedStrength(t *testing.T) {
+	weakest := identity.Resolved{
+		Anchored: true, Scope: "chess", Vouching: identity.Witnessed, Verification: identity.LiveLookup,
+	}
+	if !seatAnchorQualifies(weakest, "game") {
+		t.Fatal("weakest currently resolved anchor did not meet the seat threshold")
+	}
+	gameScoped := weakest
+	gameScoped.Scope = "chess:game"
+	if !seatAnchorQualifies(gameScoped, "game") {
+		t.Fatal("exact game scope did not meet the seat threshold")
+	}
+
+	unanchored := weakest
+	unanchored.Anchored = false
+	wrongScope := weakest
+	wrongScope.Scope = "watch"
+	unknownVouching := weakest
+	unknownVouching.Vouching = identity.VouchingUnknown
+	unknownVerification := weakest
+	unknownVerification.Verification = identity.VerificationUnknown
+	futureVouching := weakest
+	futureVouching.Vouching = identity.SelfSigned + 1
+	futureVerification := weakest
+	futureVerification.Verification = identity.InLog + 1
+	for name, resolved := range map[string]identity.Resolved{
+		"unanchored":                     unanchored,
+		"wrong scope":                    wrongScope,
+		"unknown vouching":               unknownVouching,
+		"unknown verification":           unknownVerification,
+		"unreviewed future vouching":     futureVouching,
+		"unreviewed future verification": futureVerification,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if seatAnchorQualifies(resolved, "game") {
+				t.Fatalf("%s resolution met the seat threshold: %+v", name, resolved)
+			}
+		})
+	}
+}
+
 func TestSeatForAndFoldBothRefuseAnAmbiguousPersistentSeat(t *testing.T) {
 	ctx := context.Background()
 	repo := filepath.Join(t.TempDir(), "ambiguous-seat-repo")

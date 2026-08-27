@@ -623,7 +623,7 @@ func TestAnchoredSeatRecoveryUsesExactRecordOrder(t *testing.T) {
 	}
 	alice := identity.Identity{Scheme: identity.GitHubScheme, Subject: "4242", Handle: "alice"}
 	if _, err := identity.Endorse(ctx, workspace, witnessKey, identity.Anchor{
-		Subject: actorOf(whiteKey), Identity: &alice, Scope: "chess",
+		Subject: actorOf(whiteKey), Identity: &alice, Scope: "chess", Verification: "live-lookup",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -647,7 +647,7 @@ func TestAnchoredSeatRecoveryUsesExactRecordOrder(t *testing.T) {
 	// key with an updated handle must not split Alice into two seat owners.
 	alice.Handle = "alice-now"
 	if _, err := identity.Endorse(ctx, workspace, witnessKey, identity.Anchor{
-		Subject: created.Actor, Identity: &alice, Scope: "chess",
+		Subject: created.Actor, Identity: &alice, Scope: "chess", Verification: "live-lookup",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -689,6 +689,10 @@ func TestAnchoredSeatRecoveryUsesExactRecordOrder(t *testing.T) {
 		log.Records[index].Timestamp = 1_000
 	}
 	projection := chess.Fold(log)
+	weakest := identity.Resolve(log).LookupAt(afterAnchor.ID)
+	if !weakest.Anchored || weakest.Vouching != identity.Witnessed || weakest.Verification != identity.LiveLookup {
+		t.Fatalf("recovery anchor strength = %v/%v anchored %v, want witnessed/live-lookup", weakest.Vouching, weakest.Verification, weakest.Anchored)
+	}
 	assertSeatForMatchesAct(t, foldThrough(t, log, beforeAnchor.ID), created.ID, beforeAnchor, "", false)
 	assertSeatForMatchesAct(t, foldThrough(t, log, afterAnchor.ID), created.ID, afterAnchor, "white", true)
 	assertSeatForMatchesAct(t, projection, created.ID, afterRevoke, "", false)
