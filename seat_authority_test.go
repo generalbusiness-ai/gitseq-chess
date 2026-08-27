@@ -43,6 +43,22 @@ func TestSeatIdentityThresholdRequiresAnchorScopeAndReviewedStrength(t *testing.
 	unanchored.Anchored = false
 	wrongScope := weakest
 	wrongScope.Scope = "watch"
+	for name, resolved := range map[string]identity.Resolved{
+		"unanchored":  unanchored,
+		"wrong scope": wrongScope,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if seatAnchorQualifies(resolved, "game") {
+				t.Fatalf("%s resolution met the seat threshold: %+v", name, resolved)
+			}
+		})
+	}
+}
+
+func TestSeatIdentityThresholdRefusesEveryUnreviewedStrength(t *testing.T) {
+	weakest := identity.Resolved{
+		Anchored: true, Scope: "chess", Vouching: identity.Witnessed, Verification: identity.LiveLookup,
+	}
 	unknownVouching := weakest
 	unknownVouching.Vouching = identity.VouchingUnknown
 	unknownVerification := weakest
@@ -52,8 +68,6 @@ func TestSeatIdentityThresholdRequiresAnchorScopeAndReviewedStrength(t *testing.
 	futureVerification := weakest
 	futureVerification.Verification = identity.InLog + 1
 	for name, resolved := range map[string]identity.Resolved{
-		"unanchored":                     unanchored,
-		"wrong scope":                    wrongScope,
 		"unknown vouching":               unknownVouching,
 		"unknown verification":           unknownVerification,
 		"unreviewed future vouching":     futureVouching,

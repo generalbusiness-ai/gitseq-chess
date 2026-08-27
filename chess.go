@@ -659,21 +659,25 @@ func chessScope(scope, game string) bool {
 	return scope == "chess" || scope == "chess:"+game
 }
 
-const (
-	seatMinimumVouching     = identity.Witnessed
-	seatMaximumVouching     = identity.SelfSigned
-	seatMinimumVerification = identity.LiveLookup
-	seatMaximumVerification = identity.InLog
-)
-
 // seatAnchorQualifies is the chess seat-strength policy. Every anchor rung the
 // host defines today qualifies, including the weakest witnessed/live-lookup
-// pair, but an unanchored resolution, the wrong scope, an unknown value, or a
-// future rung outside these reviewed bounds confers no seat authority.
+// pair, but an unanchored resolution, the wrong scope, or any unreviewed
+// strength value confers no seat authority.
 func seatAnchorQualifies(resolved identity.Resolved, game string) bool {
-	return resolved.Anchored && chessScope(resolved.Scope, game) &&
-		resolved.Vouching >= seatMinimumVouching && resolved.Vouching <= seatMaximumVouching &&
-		resolved.Verification >= seatMinimumVerification && resolved.Verification <= seatMaximumVerification
+	if !resolved.Anchored || !chessScope(resolved.Scope, game) {
+		return false
+	}
+	switch resolved.Vouching {
+	case identity.Witnessed, identity.SelfSigned:
+	default:
+		return false
+	}
+	switch resolved.Verification {
+	case identity.LiveLookup, identity.InLog:
+	default:
+		return false
+	}
+	return true
 }
 
 func sameIdentity(left, right identity.Identity) bool {
