@@ -24,6 +24,7 @@ import (
 
 	application "github.com/generalbusiness-ai/gitseq-chess"
 	"github.com/generalbusiness-ai/gitseq/host"
+	"github.com/generalbusiness-ai/gitseq/host/identity"
 	"github.com/generalbusiness-ai/gitseq/host/live"
 )
 
@@ -411,6 +412,7 @@ func TestMCPInitializeAndListsTheWholeDurableAndQuerySurface(t *testing.T) {
 		"list_games": false, "show_board": false, "legal_destinations": false,
 		"create": false, "join": false, "move": false, "resign": false,
 		"draw_offer": false, "draw_accept": false, "anchor": false,
+		"list_anchors": false, "revoke_anchor": false,
 	}
 	for _, tool := range tools {
 		name, _ := tool["name"].(string)
@@ -451,6 +453,23 @@ func TestReadOnlySurfacesDoNotRequireKeyCustody(t *testing.T) {
 	if !strings.Contains(string(encoded), `"isError":true`) ||
 		strings.Contains(string(encoded), "player-key custody") {
 		t.Fatalf("list_games result = %s", encoded)
+	}
+	params, err = json.Marshal(callParams{Name: "list_anchors", Arguments: json.RawMessage(`{"scope":"chess"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, respond = handleRPC(ctx, &commonFlags{repo: repo}, rpcRequest{
+		JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "tools/call", Params: params,
+	})
+	if !respond || response.Error != nil {
+		t.Fatalf("list_anchors = %+v, respond %v", response, respond)
+	}
+	encoded, err = json.Marshal(response.Result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"isError":true`) || strings.Contains(string(encoded), "player-key custody") {
+		t.Fatalf("list_anchors result = %s", encoded)
 	}
 
 	handler := newReadHandler(ctx, repo)
@@ -538,9 +557,62 @@ func TestMCPToolsCallEveryActAndBoundedQueries(t *testing.T) {
 	if resigned := call(bob, "resign", map[string]any{"game": secondGame}); resigned["effective"] != true {
 		t.Fatalf("resign = %+v", resigned)
 	}
-	anchored := call(alice, "anchor", map[string]any{"subject": "agent-fingerprint", "scope": "chess"})
-	if anchored["record"] == "" || anchored["effective"] != nil {
-		t.Fatalf("host anchor = %+v", anchored)
+	standingless := call(bob, "anchor", map[string]any{"subject": "standingless-agent", "scope": "chess"})
+	if standingless["record"] == "" || standingless["outcome"] != "refused" || standingless["effective"] != false {
+		t.Fatalf("standing-less host anchor = %+v", standingless)
+	}
+	workspace, aliceKey, err := openWriter(ctx, alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	witnessPublic, witnessKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.DeclareWitness(ctx, workspace, aliceKey, witnessPublic, []string{identity.GitHubScheme}); err != nil {
+		t.Fatal(err)
+	}
+	aliceDigest := sha256.Sum256(aliceKey.Public().(ed25519.PublicKey))
+	aliceSubject := hex.EncodeToString(aliceDigest[:])
+	if _, err := identity.Endorse(ctx, workspace, witnessKey, identity.Anchor{
+		Subject: aliceSubject, Scope: "chess", Verification: "live-lookup",
+		Identity: &identity.Identity{Scheme: identity.GitHubScheme, Subject: "4242", Handle: "alice"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	agentPublic, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentDigest := sha256.Sum256(agentPublic)
+	agentSubject := hex.EncodeToString(agentDigest[:])
+	anchored := call(alice, "anchor", map[string]any{"subject": agentSubject, "scope": "chess:" + game})
+	anchorRecord, _ := anchored["record"].(string)
+	if anchorRecord == "" || anchored["outcome"] != "created" || anchored["effective"] != true {
+		t.Fatalf("effective host anchor = %+v", anchored)
+	}
+	listed := call(alice, "list_anchors", map[string]any{"subject": agentSubject, "scope": "chess:" + game, "limit": float64(1)})
+	anchors, ok := listed["anchors"].([]application.StandingAnchor)
+	if !ok || len(anchors) != 1 || anchors[0].Record != anchorRecord || anchors[0].Subject != agentSubject {
+		t.Fatalf("subject-and-scope anchors = %+v", listed)
+	}
+	unauthorized := call(bob, "revoke_anchor", map[string]any{"record": anchorRecord})
+	if unauthorized["outcome"] != "refused" || unauthorized["effective"] != false || unauthorized["record"] == "" {
+		t.Fatalf("wrong-signer revocation = %+v", unauthorized)
+	}
+	stillListed := call(alice, "list_anchors", map[string]any{"subject": agentSubject})
+	stillStanding, ok := stillListed["anchors"].([]application.StandingAnchor)
+	if !ok || len(stillStanding) != 1 || stillStanding[0].Record != anchorRecord {
+		t.Fatalf("anchors after wrong-signer revocation = %+v", stillListed)
+	}
+	revoked := call(alice, "revoke_anchor", map[string]any{"record": anchorRecord})
+	if revoked["outcome"] != "revoked" || revoked["effective"] != true || revoked["record"] == "" {
+		t.Fatalf("authorized revocation = %+v", revoked)
+	}
+	afterRevoke := call(alice, "list_anchors", map[string]any{"scope": "chess:" + game})
+	afterAnchors, ok := afterRevoke["anchors"].([]application.StandingAnchor)
+	if !ok || len(afterAnchors) != 0 {
+		t.Fatalf("anchors after authorized revocation = %+v", afterRevoke)
 	}
 
 	page := call(alice, "list_games", map[string]any{"limit": float64(1)})
@@ -615,6 +687,55 @@ func TestMCPToolArgumentsCannotSilentlyWidenAnInvitation(t *testing.T) {
 			t.Fatalf("malformed MCP arguments created %d open games", len(projection.Games))
 		}
 	})
+}
+
+func TestMCPIdentityToolsAreBoundedAndStrict(t *testing.T) {
+	requireWritableKeyCustody(t)
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "identity-tool-bounds")
+	if err := run(ctx, []string{"init", "--repo", repo}, io.Discard, bytes.NewReader(nil)); err != nil {
+		t.Fatal(err)
+	}
+	common := &commonFlags{repo: repo}
+	callError := func(name, arguments string) string {
+		t.Helper()
+		params, err := json.Marshal(callParams{Name: name, Arguments: json.RawMessage(arguments)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, _ := handleRPC(ctx, common, rpcRequest{
+			JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "tools/call", Params: params,
+		})
+		result, ok := response.Result.(map[string]any)
+		if !ok || result["isError"] != true {
+			t.Fatalf("%s %s = %+v, want tool error", name, arguments, response)
+		}
+		encoded, err := json.Marshal(result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(encoded)
+	}
+	for name, arguments := range map[string]string{
+		"filters required": `{}`,
+		"zero limit":       `{"subject":"a","limit":0}`,
+		"large limit":      `{"scope":"chess","limit":101}`,
+		"long subject":     `{"subject":"` + strings.Repeat("a", 129) + `"}`,
+		"unknown field":    `{"scope":"chess","after":"record"}`,
+	} {
+		if message := callError("list_anchors", arguments); message == "" {
+			t.Errorf("%s returned an empty error", name)
+		}
+	}
+	for name, arguments := range map[string]string{
+		"record required": `{}`,
+		"empty record":    `{"record":""}`,
+		"unknown field":   `{"record":"candidate","force":true}`,
+	} {
+		if message := callError("revoke_anchor", arguments); message == "" {
+			t.Errorf("%s returned an empty error", name)
+		}
+	}
 }
 
 func TestMCPStrictlyRefusesMalformedAndOversizedRequests(t *testing.T) {

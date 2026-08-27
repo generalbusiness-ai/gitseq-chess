@@ -158,6 +158,36 @@ type Refusal struct {
 	Reason string `json:"reason"`
 }
 
+// IdentityMutation reports the durable record and the authority change the
+// verified host identity fold found after it was appended. Outcome is created,
+// revoked, refused, or unknown. Unknown means the record is durable but the
+// post-append verified frontier could not be read or did not contain it.
+type IdentityMutation struct {
+	Record  string `json:"record"`
+	Outcome string `json:"outcome"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+// StandingAnchor is one endorsement that still answers for its subject at the
+// verified frontier. Identity and strength come from identity.Resolve, never
+// from claims in the anchor payload.
+type StandingAnchor struct {
+	Record       string            `json:"record"`
+	Subject      string            `json:"subject"`
+	Scope        string            `json:"scope"`
+	Identity     identity.Identity `json:"identity"`
+	Vouching     string            `json:"vouching"`
+	Verification string            `json:"verification"`
+	NotAfter     int64             `json:"not_after,omitempty"`
+}
+
+// AnchorPage is a bounded read-only view of standing identity endorsements.
+type AnchorPage struct {
+	Anchors   []StandingAnchor `json:"anchors"`
+	Head      string           `json:"head"`
+	Truncated bool             `json:"truncated,omitempty"`
+}
+
 // Fold interprets records in their verified order. Malformed and unauthorized
 // chess acts are retained as bounded refusals; unknown schemas stay opaque.
 func Fold(log host.Log) Projection {
@@ -994,6 +1024,161 @@ func AcceptDraw(ctx context.Context, ws *host.Workspace, signer ed25519.PrivateK
 // host/identity; an unanchored endorser cannot mint an identity by assertion.
 func Anchor(ctx context.Context, ws *host.Workspace, signer ed25519.PrivateKey, anchor identity.Anchor) (host.Record, error) {
 	return identity.Endorse(ctx, ws, signer, anchor)
+}
+
+// RevokeAnchor records an attempt to withdraw one identity endorsement. The
+// host identity fold, not the append boundary, decides whether it has force.
+func RevokeAnchor(ctx context.Context, ws *host.Workspace, signer ed25519.PrivateKey, anchorRecord string) (host.Record, error) {
+	return identity.Revoke(ctx, ws, signer, anchorRecord)
+}
+
+// IdentityOutcome reads the verified host state after an identity mutation and
+// reports what that exact record accomplished. It deliberately does not widen
+// Decision: host identity records remain outside chess judgment. A read failure
+// returns unknown with the durable record identifier rather than either losing
+// the identifier or assuming that an append created authority.
+func IdentityOutcome(ctx context.Context, ws *host.Workspace, record host.Record) IdentityMutation {
+	result := IdentityMutation{Record: record.ID, Outcome: "unknown"}
+	if ws == nil {
+		result.Reason = "record was durably appended, but its identity outcome could not be read: workspace is required"
+		return result
+	}
+	log, err := ws.Records(ctx)
+	if err != nil {
+		result.Reason = fmt.Sprintf("record was durably appended, but its identity outcome could not be read: %v", err)
+		return result
+	}
+	index := -1
+	for candidate := range log.Records {
+		if log.Records[candidate].ID == record.ID {
+			index = candidate
+			record = log.Records[candidate]
+			break
+		}
+	}
+	if index < 0 {
+		result.Reason = "record was durably appended, but it is absent from the verified frontier"
+		return result
+	}
+	resolved := identity.Resolve(log)
+	switch record.Schema {
+	case identity.AnchorSchema:
+		var anchor identity.Anchor
+		if err := json.Unmarshal(record.Payload, &anchor); err != nil {
+			result.Reason = "the durable anchor could not be interpreted"
+			return result
+		}
+		standing := resolved.LookupActorAt(anchor.Subject, record.ID)
+		if standing.Anchored && standing.Record == record.ID {
+			result.Outcome = "created"
+			return result
+		}
+		result.Outcome = "refused"
+		result.Reason = "the endorsement did not create recovery authority"
+		return result
+	case identity.RevokeSchema:
+		var revocation identity.Revocation
+		if err := json.Unmarshal(record.Payload, &revocation); err != nil {
+			result.Reason = "the durable revocation could not be interpreted"
+			return result
+		}
+		// Compare the actual fold with the same verified position treated as an
+		// opaque record. Keeping its position and timestamp in the counterfactual
+		// prevents an expiry boundary from being mistaken for a successful
+		// withdrawal. Comparing every endorsed subject also catches withdrawal
+		// of credentials inherited from the named anchor.
+		withoutRevocation := log
+		withoutRevocation.Records = append([]host.Record(nil), log.Records...)
+		withoutRevocation.Records[index].Schema = "chess/identity-outcome-probe@0"
+		without := identity.Resolve(withoutRevocation)
+		subjects := make(map[string]bool)
+		for _, candidate := range log.Records {
+			if candidate.Schema != identity.AnchorSchema {
+				continue
+			}
+			var anchor identity.Anchor
+			if json.Unmarshal(candidate.Payload, &anchor) == nil && anchor.Subject != "" {
+				subjects[anchor.Subject] = true
+			}
+		}
+		for subject := range subjects {
+			before := without.LookupActorAt(subject, record.ID)
+			after := resolved.LookupActorAt(subject, record.ID)
+			if before != after {
+				result.Outcome = "revoked"
+				return result
+			}
+		}
+		result.Outcome = "refused"
+		result.Reason = "the revocation did not withdraw standing recovery authority"
+		return result
+	default:
+		result.Reason = "the durable record is not an identity mutation"
+		return result
+	}
+}
+
+// ListAnchors returns at most limit standing endorsements matching subject or
+// scope. Candidates come only from verified host records, while force,
+// identity, and strength come from identity.Resolve at the verified frontier.
+func ListAnchors(ctx context.Context, ws *host.Workspace, subject, scope string, limit int) (AnchorPage, error) {
+	if ws == nil {
+		return AnchorPage{}, errors.New("workspace is required")
+	}
+	if subject == "" && scope == "" {
+		return AnchorPage{}, errors.New("subject or scope is required")
+	}
+	if subject != "" && invalidIdentityFilter(subject) {
+		return AnchorPage{}, errors.New("subject must be one line of at most 128 bytes")
+	}
+	if scope != "" && invalidIdentityFilter(scope) {
+		return AnchorPage{}, errors.New("scope must be one line of at most 128 bytes")
+	}
+	if limit < 1 || limit > maxPage {
+		return AnchorPage{}, fmt.Errorf("limit must be between 1 and %d", maxPage)
+	}
+	log, err := ws.Records(ctx)
+	if err != nil {
+		return AnchorPage{}, err
+	}
+	page := AnchorPage{Anchors: []StandingAnchor{}, Head: log.Head}
+	if len(log.Records) == 0 {
+		return page, nil
+	}
+	resolution := identity.Resolve(log)
+	frontier := log.Records[len(log.Records)-1].ID
+	seen := make(map[string]bool)
+	for _, record := range log.Records {
+		if record.Schema != identity.AnchorSchema {
+			continue
+		}
+		var anchor identity.Anchor
+		if json.Unmarshal(record.Payload, &anchor) != nil {
+			continue
+		}
+		if subject != "" && anchor.Subject != subject || scope != "" && anchor.Scope != scope {
+			continue
+		}
+		standing := resolution.LookupActorAt(anchor.Subject, frontier)
+		if !standing.Anchored || standing.Record != record.ID || seen[record.ID] {
+			continue
+		}
+		seen[record.ID] = true
+		if len(page.Anchors) == limit {
+			page.Truncated = true
+			break
+		}
+		page.Anchors = append(page.Anchors, StandingAnchor{
+			Record: record.ID, Subject: anchor.Subject, Scope: standing.Scope,
+			Identity: standing.Identity, Vouching: standing.Vouching.String(),
+			Verification: standing.Verification.String(), NotAfter: anchor.NotAfter,
+		})
+	}
+	return page, nil
+}
+
+func invalidIdentityFilter(value string) bool {
+	return len(value) > 128 || strings.TrimSpace(value) != value || strings.ContainsAny(value, "\r\n\x00")
 }
 
 func readProjection(ctx context.Context, ws *host.Workspace) (Projection, error) {

@@ -602,6 +602,121 @@ func TestSharedAnchorVocabularyIsOpaqueAndNonDisruptiveToChess(t *testing.T) {
 	}
 }
 
+func TestIdentityMutationOutcomeDistinguishesEffectiveAndRefusedAnchors(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "identity-lifecycle-repo")
+	if output, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	initializer := key(t)
+	witnessPublic, witness := keyPair(t)
+	delegated := key(t)
+	stranger := key(t)
+	standinglessSubject := key(t)
+	workspace, err := host.Init(ctx, repo, chess.Application, initializer, host.Options{PayloadCeiling: 16 << 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.DeclareWitness(ctx, workspace, initializer, witnessPublic, []string{identity.GitHubScheme}); err != nil {
+		t.Fatal(err)
+	}
+	alice := identity.Identity{Scheme: identity.GitHubScheme, Subject: "4242", Handle: "alice"}
+	root, err := chess.Anchor(ctx, workspace, witness, identity.Anchor{
+		Subject: actorOf(initializer), Identity: &alice, Scope: "chess", Verification: "live-lookup",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome := chess.IdentityOutcome(ctx, workspace, root); outcome.Outcome != "created" || outcome.Record != root.ID {
+		t.Fatalf("witnessed anchor outcome = %+v", outcome)
+	}
+
+	refused, err := chess.Anchor(ctx, workspace, stranger, identity.Anchor{
+		Subject: actorOf(standinglessSubject), Scope: "chess",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome := chess.IdentityOutcome(ctx, workspace, refused); outcome.Outcome != "refused" || outcome.Record != refused.ID || outcome.Reason == "" {
+		t.Fatalf("standing-less anchor outcome = %+v", outcome)
+	}
+
+	credential, err := chess.Anchor(ctx, workspace, initializer, identity.Anchor{
+		Subject: actorOf(delegated), Scope: "chess:recovery",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome := chess.IdentityOutcome(ctx, workspace, credential); outcome.Outcome != "created" {
+		t.Fatalf("delegated anchor outcome = %+v", outcome)
+	}
+	bySubject, err := chess.ListAnchors(ctx, workspace, actorOf(delegated), "", 100)
+	if err != nil || len(bySubject.Anchors) != 1 || bySubject.Anchors[0].Record != credential.ID || bySubject.Anchors[0].Scope != "chess:recovery" {
+		t.Fatalf("subject anchor page = %+v, %v", bySubject, err)
+	}
+	byScope, err := chess.ListAnchors(ctx, workspace, "", "chess:recovery", 100)
+	if err != nil || len(byScope.Anchors) != 1 || byScope.Anchors[0].Subject != actorOf(delegated) {
+		t.Fatalf("scope anchor page = %+v, %v", byScope, err)
+	}
+	secondDelegated := key(t)
+	if _, err := chess.Anchor(ctx, workspace, initializer, identity.Anchor{
+		Subject: actorOf(secondDelegated), Scope: "chess:recovery",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bounded, err := chess.ListAnchors(ctx, workspace, "", "chess:recovery", 1)
+	if err != nil || len(bounded.Anchors) != 1 || !bounded.Truncated {
+		t.Fatalf("bounded anchor page = %+v, %v", bounded, err)
+	}
+
+	unauthorized, err := chess.RevokeAnchor(ctx, workspace, stranger, credential.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome := chess.IdentityOutcome(ctx, workspace, unauthorized); outcome.Outcome != "refused" || outcome.Record != unauthorized.ID {
+		t.Fatalf("wrong-signer revocation outcome = %+v", outcome)
+	}
+	stillStanding, err := chess.ListAnchors(ctx, workspace, actorOf(delegated), "", 100)
+	if err != nil || len(stillStanding.Anchors) != 1 || stillStanding.Anchors[0].Record != credential.ID {
+		t.Fatalf("anchor after wrong-signer revocation = %+v, %v", stillStanding, err)
+	}
+
+	revoked, err := chess.RevokeAnchor(ctx, workspace, initializer, credential.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome := chess.IdentityOutcome(ctx, workspace, revoked); outcome.Outcome != "revoked" || outcome.Record != revoked.ID {
+		t.Fatalf("authorized revocation outcome = %+v", outcome)
+	}
+	after, err := chess.ListAnchors(ctx, workspace, actorOf(delegated), "", 100)
+	if err != nil || len(after.Anchors) != 0 {
+		t.Fatalf("anchors after authorized revocation = %+v, %v", after, err)
+	}
+}
+
+func TestIdentityMutationReadFailureIsUnknownAndKeepsTheRecord(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "identity-read-failure")
+	if output, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	signer := key(t)
+	workspace, err := host.Init(ctx, repo, chess.Application, signer, host.Options{PayloadCeiling: 16 << 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := chess.Anchor(ctx, workspace, signer, identity.Anchor{Subject: actorOf(key(t)), Scope: "chess"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	outcome := chess.IdentityOutcome(canceled, workspace, record)
+	if outcome.Outcome != "unknown" || outcome.Record != record.ID || !strings.Contains(outcome.Reason, "durably appended") {
+		t.Fatalf("post-append read failure = %+v", outcome)
+	}
+}
+
 func TestAnchoredSeatRecoveryUsesExactRecordOrder(t *testing.T) {
 	ctx := context.Background()
 	repo := filepath.Join(t.TempDir(), "recovery-repo")

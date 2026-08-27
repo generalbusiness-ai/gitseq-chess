@@ -509,6 +509,8 @@ func mcpTools() []map[string]any {
 		{"name": "draw_offer", "description": "Offer a draw", "inputSchema": object(map[string]any{"game": game["game"], "idempotency_key": stringField("Stable retry key")}, "game")},
 		{"name": "draw_accept", "description": "Accept the pending draw", "inputSchema": object(map[string]any{"game": game["game"], "idempotency_key": stringField("Stable retry key")}, "game")},
 		{"name": "anchor", "description": "Endorse a session or agent key through host identity", "inputSchema": object(map[string]any{"subject": stringField("Key fingerprint to endorse"), "scope": stringField("chess or chess:<game>"), "not_after": map[string]any{"type": "integer"}}, "subject", "scope")},
+		{"name": "list_anchors", "description": "List a bounded set of standing host identity anchors", "inputSchema": object(map[string]any{"subject": stringField("Exact endorsed key fingerprint"), "scope": stringField("Exact chess or chess:<game> scope"), "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}})},
+		{"name": "revoke_anchor", "description": "Withdraw an identity anchor or delegated credential", "inputSchema": object(map[string]any{"record": stringField("Anchor or credential record identifier")}, "record")},
 	}
 }
 
@@ -575,12 +577,35 @@ func callTool(ctx context.Context, common *commonFlags, params callParams) (any,
 		}
 		selection := application.LegalSelection(game, arguments.From)
 		return map[string]any{"destinations": selection.Destinations, "reason": selection.Reason, "head": projection.Head}, nil
+	case "list_anchors":
+		var arguments struct {
+			Subject string `json:"subject,omitempty"`
+			Scope   string `json:"scope,omitempty"`
+			Limit   *int   `json:"limit,omitempty"`
+		}
+		if err := decodeArguments(params.Arguments, &arguments); err != nil {
+			return nil, err
+		}
+		limit := 100
+		if arguments.Limit != nil {
+			limit = *arguments.Limit
+		}
+		workspace, err := host.Open(ctx, common.repo, application.Application)
+		if err != nil {
+			return nil, err
+		}
+		page, err := application.ListAnchors(ctx, workspace, arguments.Subject, arguments.Scope, limit)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"anchors": page.Anchors, "head": page.Head, "truncated": page.Truncated}, nil
 	}
 	workspace, key, err := openWriter(ctx, common)
 	if err != nil {
 		return nil, err
 	}
 	var record host.Record
+	identityMutation := false
 	switch params.Name {
 	case "create":
 		var arguments struct {
@@ -639,6 +664,19 @@ func callTool(ctx context.Context, common *commonFlags, params callParams) (any,
 				err = errors.New("subject and scope are required")
 			} else {
 				record, err = application.Anchor(ctx, workspace, key, identity.Anchor{Subject: arguments.Subject, Scope: arguments.Scope, NotAfter: arguments.NotAfter})
+				identityMutation = true
+			}
+		}
+	case "revoke_anchor":
+		var arguments struct {
+			Record string `json:"record"`
+		}
+		if err = decodeArguments(params.Arguments, &arguments); err == nil {
+			if arguments.Record == "" {
+				err = errors.New("record is required")
+			} else {
+				record, err = application.RevokeAnchor(ctx, workspace, key, arguments.Record)
+				identityMutation = true
 			}
 		}
 	default:
@@ -647,7 +685,26 @@ func callTool(ctx context.Context, common *commonFlags, params callParams) (any,
 	if err != nil {
 		return nil, err
 	}
+	if identityMutation {
+		return identityActionResult(application.IdentityOutcome(ctx, workspace, record)), nil
+	}
 	return actionResult(ctx, workspace, record)
+}
+
+func identityActionResult(outcome application.IdentityMutation) map[string]any {
+	result := map[string]any{"record": outcome.Record, "outcome": outcome.Outcome}
+	switch outcome.Outcome {
+	case "created", "revoked":
+		result["effective"] = true
+	case "refused":
+		result["effective"] = false
+	default:
+		result["effective"] = nil
+	}
+	if outcome.Reason != "" {
+		result["reason"] = outcome.Reason
+	}
+	return result
 }
 
 func decodeArguments(data json.RawMessage, target any) error {
