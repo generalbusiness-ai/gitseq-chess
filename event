@@ -1,1 +1,1 @@
-{"kind":"artifact","text":"Merge published the current artifact at cmd/chess","body":{"commit":"5c29123ba653dbda0054b146300f604883c4e2a9","path":"cmd/chess"}}
+{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:29def57fd13900521e753565473e7f36e5ba17a1","text":"Merge retired a covered predecessor; the successor is at cmd/chess."}
