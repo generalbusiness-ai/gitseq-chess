@@ -1,1 +1,1 @@
-{"kind":"artifact","text":"Merge published the current artifact at notes/2026-08-27-browser-playability.md","body":{"commit":"3db27871f8cb1cf980c187222ba24c7ca663fc8b","path":"notes/2026-08-27-browser-playability.md"}}
+{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:3ccb2a466d3c796195e95c398a255160e96b83fd","text":"Merge retired a covered predecessor; the successor is at notes/2026-08-27-browser-playability.md."}
