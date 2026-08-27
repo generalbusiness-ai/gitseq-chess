@@ -458,6 +458,13 @@ func TestHTTPReadProjectionIsBoundedAndCarriesTheVerifiedHead(t *testing.T) {
 	}
 }
 
+func TestBrowserUIJavaScript(t *testing.T) {
+	output, err := exec.Command("node", "--test", "app_ui_test.cjs").CombinedOutput()
+	if err != nil {
+		t.Fatalf("node --test app_ui_test.cjs: %v\n%s", err, output)
+	}
+}
+
 func TestEmbeddedUIRendersTheExactFoldedPositionAndSeats(t *testing.T) {
 	requireWritableKeyCustody(t)
 	ctx := context.Background()
