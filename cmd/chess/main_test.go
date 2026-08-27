@@ -786,16 +786,22 @@ func postJSON(t *testing.T, handler http.Handler, target string, value, decoded 
 	return response
 }
 
-func openBrowserLiveSession(t *testing.T, handler http.Handler, runtime *chessLive, game string, private ed25519.PrivateKey) (string, string) {
+func openBrowserLiveSession(t *testing.T, handler http.Handler, runtime *chessLive, game string, private ed25519.PrivateKey, names ...string) (string, string) {
 	t.Helper()
 	public := private.Public().(ed25519.PublicKey)
+	var displayName *string
+	if len(names) != 0 {
+		displayName = &names[0]
+	}
 	before := runtime.hub.Snapshot()
 	var prepared struct {
 		Challenge    live.SessionChallenge `json:"challenge"`
 		SigningBytes []byte                `json:"signing_bytes"`
 		Role         string                `json:"role"`
 	}
-	postJSON(t, handler, "/v1/live/session/prepare", liveSessionPrepareRequest{Game: game, ActorKey: public}, &prepared, http.StatusOK)
+	postJSON(t, handler, "/v1/live/session/prepare", liveSessionPrepareRequest{
+		Game: game, ActorKey: public, DisplayName: displayName,
+	}, &prepared, http.StatusOK)
 	afterPrepare := runtime.hub.Snapshot()
 	if afterPrepare.Cursor != before.Cursor || len(afterPrepare.Presence) != len(before.Presence) {
 		t.Fatal("unproved browser challenge published presence")
@@ -867,7 +873,8 @@ func TestLiveRoomProvesBrowserKeysAndKeepsTheFoldAuthoritative(t *testing.T) {
 	postJSON(t, handler, "/v1/live/session/open", liveSessionOpenRequest{
 		Challenge: failedProof.Challenge, Signature: ed25519.Sign(failedPrivate, failedProof.SigningBytes),
 	}, nil, http.StatusBadRequest)
-	aliceCredential, aliceRole := openBrowserLiveSession(t, handler, runtime, gameID, alice)
+	aliceDisplayName := "Alice <strong>"
+	aliceCredential, aliceRole := openBrowserLiveSession(t, handler, runtime, gameID, alice, aliceDisplayName)
 	if aliceRole != "white" {
 		t.Fatalf("fold-derived Alice role = %q, want white", aliceRole)
 	}
@@ -881,7 +888,7 @@ func TestLiveRoomProvesBrowserKeysAndKeepsTheFoldAuthoritative(t *testing.T) {
 
 	public := alice.Public().(ed25519.PublicKey)
 	postJSON(t, handler, "/v1/live/motion", liveMotionRequest{
-		Credential: aliceCredential, Game: gameID, ActorKey: public, Phase: "dragged", From: "e2",
+		Credential: aliceCredential, Game: gameID, ActorKey: public, DisplayName: &aliceDisplayName, Phase: "dragged", From: "e2",
 	}, nil, http.StatusOK)
 	if conversations := runtime.hub.Snapshot().Conversations; len(conversations) != 0 {
 		t.Fatalf("leased motion opened retained conversations: %v", conversations)
@@ -896,7 +903,7 @@ func TestLiveRoomProvesBrowserKeysAndKeepsTheFoldAuthoritative(t *testing.T) {
 		postJSON(t, handler, "/v1/live/motion", invalid, nil, http.StatusBadRequest)
 	}
 	postJSON(t, handler, "/v1/live/motion", liveMotionRequest{
-		Credential: aliceCredential, Game: gameID, ActorKey: public, Phase: "submitting", From: "e2", To: "e4",
+		Credential: aliceCredential, Game: gameID, ActorKey: public, DisplayName: &aliceDisplayName, Phase: "submitting", From: "e2", To: "e4",
 	}, nil, http.StatusOK)
 	postJSON(t, handler, "/v1/live/motion", liveMotionRequest{
 		Credential: aliceCredential, Game: otherGameID, ActorKey: public, Phase: "submitting", From: "e2", To: "e4",
@@ -951,6 +958,25 @@ func TestLiveRoomProvesBrowserKeysAndKeepsTheFoldAuthoritative(t *testing.T) {
 	if len(observed.Participants) != 2 || len(observed.Motions) != 1 || len(observed.Chat) != 1 {
 		t.Fatalf("live view = %+v", observed)
 	}
+	aliceFingerprint := liveFingerprint(public)
+	if observed.Motions[0].Actor != aliceFingerprint || observed.Motions[0].DisplayName != aliceDisplayName {
+		t.Fatalf("motion authority label inputs = %+v", observed.Motions[0])
+	}
+	if observed.Chat[0].Actor != aliceFingerprint || observed.Chat[0].DisplayName != aliceDisplayName {
+		t.Fatalf("chat display name = %+v", observed.Chat[0])
+	}
+	foundAlice, foundUnnamed := false, false
+	for _, participant := range observed.Participants {
+		if participant.Actor == aliceFingerprint && participant.DisplayName == aliceDisplayName {
+			foundAlice = true
+		}
+		if participant.Actor == liveFingerprint(watcherPublic) && participant.DisplayName == "" {
+			foundUnnamed = true
+		}
+	}
+	if !foundAlice || !foundUnnamed {
+		t.Fatalf("participant display names = %+v", observed.Participants)
+	}
 	if observed.Motions[0].From != "e2" || observed.Motions[0].To != "e4" || observed.Motions[0].Role != "white" || observed.Motions[0].Phase != "submitting" {
 		t.Fatalf("projected motion = %+v", observed.Motions[0])
 	}
@@ -968,7 +994,7 @@ func TestLiveRoomProvesBrowserKeysAndKeepsTheFoldAuthoritative(t *testing.T) {
 	// the watcher who did not need a conversation participant grant still sees
 	// the one game transcript.
 	postJSON(t, handler, "/v1/live/session/renew", liveSessionRenewRequest{
-		Credential: aliceCredential, Game: gameID, ActorKey: public,
+		Credential: aliceCredential, Game: gameID, ActorKey: public, DisplayName: &aliceDisplayName,
 	}, nil, http.StatusOK)
 	var watcherObserved liveObserveResponse
 	postJSON(t, handler, "/v1/live/observe", liveObserveRequest{
@@ -1282,7 +1308,7 @@ func TestLeasedMotionExpiresWithoutRetainedFrames(t *testing.T) {
 	game := "git:sha1:" + strings.Repeat("e", 40) + "#git:sha1:" + strings.Repeat("f", 40)
 	fingerprint := liveFingerprint(public)
 	presence := livePresence{
-		Game: game, Actor: fingerprint, Role: "white",
+		Game: game, Actor: fingerprint, Role: "white", DisplayName: "Alice",
 		Motion: &liveMotion{Phase: "submitting", Head: "head", From: "e2", To: "e4", Role: "white"},
 	}
 	value, _ := json.Marshal(presence)
@@ -1294,17 +1320,43 @@ func TestLeasedMotionExpiresWithoutRetainedFrames(t *testing.T) {
 	if _, _, err := runtime.hub.OpenSession(challenge, ed25519.Sign(private, signingBytes)); err != nil {
 		t.Fatal(err)
 	}
+	runtime.chat[game] = liveChatProjection{messages: []liveChatMessage{{
+		ID: "chat:1", Actor: fingerprint, Text: "hello",
+	}}}
 	runtime.mu.Lock()
-	_, motions, _ := runtime.projectLiveLocked(game, "head", runtime.hub.Snapshot())
+	participants, motions, chat := runtime.projectLiveLocked(game, "head", runtime.hub.Snapshot())
 	runtime.mu.Unlock()
-	if len(motions) != 1 || len(runtime.hub.Snapshot().Conversations) != 0 {
-		t.Fatalf("initial leased motion = %+v conversations = %v", motions, runtime.hub.Snapshot().Conversations)
+	if len(participants) != 1 || participants[0].DisplayName != "Alice" || len(motions) != 1 || len(chat) != 1 || chat[0].DisplayName != "Alice" || len(runtime.hub.Snapshot().Conversations) != 0 {
+		t.Fatalf("initial leased presence = %+v motion = %+v chat = %+v conversations = %v", participants, motions, chat, runtime.hub.Snapshot().Conversations)
 	}
 	time.Sleep(15 * time.Millisecond)
 	runtime.mu.Lock()
-	participants, motions, _ := runtime.projectLiveLocked(game, "head", runtime.hub.Snapshot())
+	participants, motions, chat = runtime.projectLiveLocked(game, "head", runtime.hub.Snapshot())
 	runtime.mu.Unlock()
-	if len(participants) != 0 || len(motions) != 0 {
-		t.Fatalf("expired presence remained visible: participants=%+v motions=%+v", participants, motions)
+	if len(participants) != 0 || len(motions) != 0 || len(chat) != 1 || chat[0].DisplayName != "" {
+		t.Fatalf("expired presence remained visible: participants=%+v motions=%+v chat=%+v", participants, motions, chat)
+	}
+}
+
+func TestDisplayNameBoundaryAcceptsMissingAndRefusesInvalidNames(t *testing.T) {
+	if got, err := normalizeDisplayName(nil); err != nil || got != "" {
+		t.Fatalf("missing display name = %q, %v", got, err)
+	}
+	spaced := "  Alice  "
+	if got, err := normalizeDisplayName(&spaced); err != nil || got != "Alice" {
+		t.Fatalf("trimmed display name = %q, %v", got, err)
+	}
+	for name, value := range map[string]string{
+		"empty":            "",
+		"whitespace":       " \t ",
+		"control":          "Alice\nBob",
+		"trailing control": "Alice\n",
+		"overlong":         strings.Repeat("a", maxDisplayNameRunes+1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got, err := normalizeDisplayName(&value); err == nil {
+				t.Fatalf("normalizeDisplayName(%q) = %q, want refusal", value, got)
+			}
+		})
 	}
 }
