@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	application "github.com/generalbusiness-ai/gitseq-chess"
 	"github.com/generalbusiness-ai/gitseq/host/live"
@@ -52,7 +54,7 @@ type chessLive struct {
 
 type liveChatProjection struct {
 	conversation string
-	messages     []liveChatView
+	messages     []liveChatMessage
 }
 
 func newChessLive() (*chessLive, error) {
@@ -267,6 +269,7 @@ const (
 	maxLiveRequestBytes = 32 << 10
 	maxLiveFrames       = 100
 	maxLiveWaiters      = 32
+	maxDisplayNameRunes = 64
 	liveWriteTimeout    = live.MaxCompositeWait + 5*time.Second
 )
 
@@ -277,15 +280,17 @@ var (
 )
 
 type livePresence struct {
-	Game   string      `json:"game"`
-	Actor  string      `json:"actor"`
-	Role   string      `json:"role"`
-	Motion *liveMotion `json:"motion,omitempty"`
+	Game        string      `json:"game"`
+	Actor       string      `json:"actor"`
+	Role        string      `json:"role"`
+	DisplayName string      `json:"display_name,omitempty"`
+	Motion      *liveMotion `json:"motion,omitempty"`
 }
 
 type liveSessionPrepareRequest struct {
-	Game     string `json:"game"`
-	ActorKey []byte `json:"actor_key"`
+	Game        string  `json:"game"`
+	ActorKey    []byte  `json:"actor_key"`
+	DisplayName *string `json:"display_name,omitempty"`
 }
 
 type liveSessionOpenRequest struct {
@@ -294,9 +299,10 @@ type liveSessionOpenRequest struct {
 }
 
 type liveSessionRenewRequest struct {
-	Credential string `json:"credential"`
-	Game       string `json:"game"`
-	ActorKey   []byte `json:"actor_key"`
+	Credential  string  `json:"credential"`
+	Game        string  `json:"game"`
+	ActorKey    []byte  `json:"actor_key"`
+	DisplayName *string `json:"display_name,omitempty"`
 }
 
 type liveSessionRevokeRequest struct {
@@ -304,12 +310,13 @@ type liveSessionRevokeRequest struct {
 }
 
 type liveMotionRequest struct {
-	Credential string `json:"credential"`
-	Game       string `json:"game"`
-	ActorKey   []byte `json:"actor_key"`
-	Phase      string `json:"phase"`
-	From       string `json:"from"`
-	To         string `json:"to,omitempty"`
+	Credential  string  `json:"credential"`
+	Game        string  `json:"game"`
+	ActorKey    []byte  `json:"actor_key"`
+	DisplayName *string `json:"display_name,omitempty"`
+	Phase       string  `json:"phase"`
+	From        string  `json:"from"`
+	To          string  `json:"to,omitempty"`
 }
 
 type liveMotion struct {
@@ -341,21 +348,30 @@ type liveObserveRequest struct {
 }
 
 type liveParticipantView struct {
-	Handle string `json:"handle"`
-	Actor  string `json:"actor"`
-	Role   string `json:"role"`
+	Handle      string `json:"handle"`
+	Actor       string `json:"actor"`
+	Role        string `json:"role"`
+	DisplayName string `json:"display_name,omitempty"`
 }
 
 type liveMotionView struct {
-	ID    string `json:"id"`
-	Actor string `json:"actor"`
+	ID          string `json:"id"`
+	Actor       string `json:"actor"`
+	DisplayName string `json:"display_name,omitempty"`
 	liveMotion
 }
 
 type liveChatView struct {
-	ID    string `json:"id"`
-	Actor string `json:"actor"`
-	Text  string `json:"text"`
+	ID          string `json:"id"`
+	Actor       string `json:"actor"`
+	DisplayName string `json:"display_name,omitempty"`
+	Text        string `json:"text"`
+}
+
+type liveChatMessage struct {
+	ID    string
+	Actor string
+	Text  string
 }
 
 type liveObserveResponse struct {
@@ -381,6 +397,11 @@ func (runtime *chessLive) register(mux *http.ServeMux, read projectionReader) {
 			http.Error(w, "game and actor_key are required", http.StatusBadRequest)
 			return
 		}
+		displayName, err := normalizeDisplayName(input.DisplayName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		projection, game, err := readGame(request.Context(), read, input.Game)
 		if err != nil {
 			serveGameReadError(w, err)
@@ -391,7 +412,7 @@ func (runtime *chessLive) register(mux *http.ServeMux, read projectionReader) {
 		// A prepared challenge carries only watcher authority. Player authority is
 		// recomputed from the current fold after proof succeeds, so a challenge
 		// cannot preserve a role across a durable seat change.
-		presence := livePresence{Game: game.ID, Actor: fingerprint, Role: "watcher"}
+		presence := livePresence{Game: game.ID, Actor: fingerprint, Role: "watcher", DisplayName: displayName}
 		value, _ := json.Marshal(presence)
 		challenge, err := runtime.hub.PrepareSession(sessionActor(game.ID, fingerprint), public, string(value), live.DefaultSessionTTL, live.ActivityUpdate{})
 		if err != nil {
@@ -460,6 +481,11 @@ func (runtime *chessLive) register(mux *http.ServeMux, read projectionReader) {
 			http.Error(w, "game and actor_key are required", http.StatusBadRequest)
 			return
 		}
+		displayName, err := normalizeDisplayName(input.DisplayName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		projection, game, err := readGame(request.Context(), read, input.Game)
 		if err != nil {
 			serveGameReadError(w, err)
@@ -470,7 +496,9 @@ func (runtime *chessLive) register(mux *http.ServeMux, read projectionReader) {
 			http.Error(w, "credential is not valid", http.StatusBadRequest)
 			return
 		}
-		presence := livePresence{Game: game.ID, Actor: fingerprint, Role: runtime.role(projection, game.ID, fingerprint)}
+		presence := livePresence{
+			Game: game.ID, Actor: fingerprint, Role: runtime.role(projection, game.ID, fingerprint), DisplayName: displayName,
+		}
 		change, err := runtime.renewPresence(input.Credential, public, presence)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -501,13 +529,18 @@ func (runtime *chessLive) register(mux *http.ServeMux, read projectionReader) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		displayName, err := normalizeDisplayName(input.DisplayName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		projection, game, role, err := runtime.validateMotion(request.Context(), read, input.Credential, input.Game, input.Phase, input.From, input.To, public)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		presence := livePresence{
-			Game: game.ID, Actor: liveFingerprint(public), Role: role,
+			Game: game.ID, Actor: liveFingerprint(public), Role: role, DisplayName: displayName,
 			Motion: &liveMotion{Phase: input.Phase, Head: projection.Head, From: input.From, To: input.To, Role: role},
 		}
 		change, err := runtime.renewPresence(input.Credential, public, presence)
@@ -660,6 +693,25 @@ func browserPublicKey(raw []byte) (ed25519.PublicKey, error) {
 	return ed25519.PublicKey(append([]byte(nil), raw...)), nil
 }
 
+func normalizeDisplayName(value *string) (string, error) {
+	if value == nil {
+		return "", nil
+	}
+	for _, character := range *value {
+		if unicode.IsControl(character) {
+			return "", errors.New("display_name must not contain control characters")
+		}
+	}
+	name := strings.TrimSpace(*value)
+	if name == "" {
+		return "", errors.New("display_name must not be empty")
+	}
+	if utf8.RuneCountInString(name) > maxDisplayNameRunes {
+		return "", fmt.Errorf("display_name must be at most %d characters", maxDisplayNameRunes)
+	}
+	return name, nil
+}
+
 func decodeCanonicalLivePayload(payload []byte, target any) error {
 	if err := strictJSON(payload, target); err != nil {
 		return err
@@ -780,7 +832,7 @@ func (runtime *chessLive) rememberChatLocked(game string, frame live.Frame, mess
 	}
 	projection.conversation = frame.Conversation
 	actor := liveFingerprint(frame.ActorKey)
-	projection.messages = append(projection.messages, liveChatView{
+	projection.messages = append(projection.messages, liveChatMessage{
 		ID: frame.Conversation + ":" + strconv.FormatUint(frame.Sequence, 10), Actor: actor, Text: message.Text,
 	})
 	if len(projection.messages) > maxLiveFrames {
@@ -807,19 +859,39 @@ func (runtime *chessLive) projectLiveLocked(game, head string, snapshot live.Sna
 	for handle, value := range snapshot.Presence {
 		var presence livePresence
 		if json.Unmarshal([]byte(value), &presence) == nil && presence.Game == game {
-			participants = append(participants, liveParticipantView{Handle: handle, Actor: presence.Actor, Role: presence.Role})
+			displayName := presence.DisplayName
+			if normalized, err := normalizeDisplayName(&displayName); err != nil || normalized != displayName {
+				displayName = ""
+			}
+			participants = append(participants, liveParticipantView{
+				Handle: handle, Actor: presence.Actor, Role: presence.Role, DisplayName: displayName,
+			})
 			if presence.Motion != nil && presence.Motion.Head == head {
 				motion := *presence.Motion
 				motions = append(motions, liveMotionView{
 					ID:    handle + ":" + motion.Head + ":" + motion.Phase + ":" + motion.From + ":" + motion.To,
-					Actor: presence.Actor, liveMotion: motion,
+					Actor: presence.Actor, DisplayName: displayName, liveMotion: motion,
 				})
 			}
 		}
 	}
 	slices.SortFunc(participants, func(left, right liveParticipantView) int { return strings.Compare(left.Handle, right.Handle) })
 	slices.SortFunc(motions, func(left, right liveMotionView) int { return strings.Compare(left.ID, right.ID) })
-	chat := slices.Clone(runtime.chat[game].messages)
+	displayNames := make(map[string]string, len(participants))
+	for _, participant := range participants {
+		if _, exists := displayNames[participant.Actor]; !exists && participant.DisplayName != "" {
+			displayNames[participant.Actor] = participant.DisplayName
+		}
+	}
+	// A chat frame retains only its verified actor fingerprint. Its self-asserted
+	// name is joined from current presence so the label expires with the lease.
+	messages := runtime.chat[game].messages
+	chat := make([]liveChatView, len(messages))
+	for index, message := range messages {
+		chat[index] = liveChatView{
+			ID: message.ID, Actor: message.Actor, DisplayName: displayNames[message.Actor], Text: message.Text,
+		}
+	}
 	return participants, motions, chat
 }
 

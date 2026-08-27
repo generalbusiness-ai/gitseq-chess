@@ -1,5 +1,31 @@
+function actorLabel(actor, displayName, fallbackLength, authority = false) {
+  if (authority) return displayName ? `${displayName} (${actor})` : actor;
+  return displayName || actor.slice(0, fallbackLength);
+}
+
+function createActorLabel(ownerDocument, actor, displayName, fallbackLength) {
+  const label = ownerDocument.createElement(displayName ? "span" : "code");
+  label.className = "actor-label";
+  label.textContent = actorLabel(actor, displayName, fallbackLength);
+  label.title = actor;
+  return label;
+}
+
+function promptedDisplayName(value) {
+  if (value === null) return undefined;
+  if (/[\u0000-\u001f\u007f-\u009f]/u.test(value)) throw new Error("Display name must not contain control characters.");
+  const name = value.trim();
+  if (!name) throw new Error("Display name must not be empty.");
+  if ([...name].length > 64) throw new Error("Display name must be at most 64 characters.");
+  return name;
+}
+
+if (typeof module !== "undefined") module.exports = {actorLabel, createActorLabel, promptedDisplayName};
+
 (() => {
   "use strict";
+
+  if (typeof document === "undefined") return;
 
   const body = document.body;
   const durableHead = body.dataset.head || "";
@@ -7,6 +33,7 @@
   let keyPair = null;
   let actorKey = "";
   let credential = "";
+  let displayName;
   let role = "watcher";
   let selectedFrom = "";
   let destinations = [];
@@ -57,7 +84,7 @@
   async function publishMotion(phase, from, to = "") {
     if (!credential || !keyPair) return;
     try {
-      await post("/v1/live/motion", {credential, game, actor_key: actorKey, phase, from, to});
+      await post("/v1/live/motion", {credential, game, actor_key: actorKey, display_name: displayName, phase, from, to});
     } catch (error) {
       const status = document.getElementById("live-status");
       if (status) status.textContent = `Motion preview refused: ${error.message}`;
@@ -127,9 +154,7 @@
       const badge = document.createElement("span");
       badge.className = "participant-role";
       badge.textContent = participant.role;
-      const actor = document.createElement("code");
-      actor.textContent = participant.actor.slice(0, 12);
-      actor.title = participant.actor;
+      const actor = createActorLabel(document, participant.actor, participant.display_name, 12);
       item.append(badge, actor);
       list.append(item);
     });
@@ -147,9 +172,7 @@
     }
     messages.forEach((message) => {
       const item = document.createElement("li");
-      const actor = document.createElement("code");
-      actor.textContent = message.actor.slice(0, 10);
-      actor.title = message.actor;
+      const actor = createActorLabel(document, message.actor, message.display_name, 10);
       const text = document.createElement("span");
       text.textContent = message.text;
       item.append(actor, text);
@@ -177,9 +200,10 @@
           if (to) to.classList.remove("motion-to");
         }, 650);
       });
+      const attributedActor = actorLabel(motion.actor, motion.display_name, 0, true);
       if (help) help.textContent = motion.phase === "dragged"
-        ? `${motion.role} is dragging from ${motion.from}; the durable board is unchanged.`
-        : `${motion.role} is submitting ${motion.from} to ${motion.to}; the durable board is unchanged.`;
+        ? `${attributedActor} (${motion.role}) is dragging from ${motion.from}; the durable board is unchanged.`
+        : `${attributedActor} (${motion.role}) is submitting ${motion.from} to ${motion.to}; the durable board is unchanged.`;
     });
   }
 
@@ -210,11 +234,12 @@
   if (join && game) {
     join.addEventListener("click", async () => {
       join.disabled = true;
-      if (status) status.textContent = "Creating a temporary signing key in this tab…";
       try {
+        displayName = promptedDisplayName(window.prompt("Display name (optional; cancel to use your fingerprint):"));
+        if (status) status.textContent = "Creating a temporary signing key in this tab…";
         keyPair = await window.crypto.subtle.generateKey({name: "Ed25519"}, false, ["sign", "verify"]);
         actorKey = bytesToBase64(await window.crypto.subtle.exportKey("raw", keyPair.publicKey));
-        const prepared = await post("/v1/live/session/prepare", {game, actor_key: actorKey});
+        const prepared = await post("/v1/live/session/prepare", {game, actor_key: actorKey, display_name: displayName});
         const signature = await window.crypto.subtle.sign("Ed25519", keyPair.privateKey, base64ToBytes(prepared.signing_bytes));
         const opened = await post("/v1/live/session/open", {challenge: prepared.challenge, signature: bytesToBase64(signature)});
         credential = opened.credential;
@@ -228,6 +253,7 @@
       } catch (error) {
         keyPair = null;
         actorKey = "";
+        displayName = undefined;
         join.disabled = false;
         if (status) status.textContent = `Could not join the live room: ${error.message}`;
       }
@@ -257,7 +283,7 @@
   window.setInterval(async () => {
     if (!credential || !keyPair) return;
     try {
-      const renewed = await post("/v1/live/session/renew", {credential, game, actor_key: actorKey});
+      const renewed = await post("/v1/live/session/renew", {credential, game, actor_key: actorKey, display_name: displayName});
       role = renewed.role;
     } catch (_error) {
       credential = "";
