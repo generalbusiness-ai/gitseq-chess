@@ -1,1 +1,1 @@
-{"kind":"artifact","text":"Merge published the current artifact at go.sum","body":{"commit":"6914295b958751d08c2e497346472d74fc637a0f","path":"go.sum"}}
+{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:1f05689fcef53bd3411e309b2b34362af92589f4","text":"Merge retired a covered predecessor; the successor is at go.mod."}
