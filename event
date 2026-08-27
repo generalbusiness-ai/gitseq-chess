@@ -1,1 +1,1 @@
-{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:cb4ad9ac9bdb06d48c12acc1e215aab52261f42a","text":"Retire the superseded d73400e8 candidate artifact at chess_test.go; e48fa066 is the current exact-path successor at pushed head 4bd390f6."}
+{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:15380864a7666cc8bbd90a061077fcd45a3d4651","text":"Retire the superseded d73400e8 candidate artifact at seat_authority_test.go; f1d4dd0e is the current exact-path successor at pushed head 4bd390f6."}
