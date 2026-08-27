@@ -3,20 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Gitseq Chess</title>
+  <title>durable games: chess</title>
   <link rel="stylesheet" href="/assets/app.css">
   <script src="/assets/app.js" defer></script>
 </head>
 <body data-head="{{.Head}}" data-view="lobby">
   <header class="masthead">
-    <a class="wordmark" href="/">Gitseq Chess</a>
-    <span class="frontier" title="{{.Head}}">Verified frontier <code>{{.Head}}</code></span>
+    <a class="wordmark" href="/">durable games: chess</a>
+    <nav class="toolbar" aria-label="Site links">
+      <button class="icon-button" type="button" data-help-open aria-label="How to play">?</button>
+      <a class="icon-button" href="https://github.com/generalbusiness-ai/gitseq-chess" aria-label="GitHub repository" title="GitHub repository">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .7a11.5 11.5 0 0 0-3.6 22.4c.6.1.8-.2.8-.6v-2.2c-3.3.7-4-1.4-4-1.4-.5-1.4-1.3-1.8-1.3-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.4-1.3-5.4-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.2 1.2a11 11 0 0 1 5.8 0C17.8 5 18.8 5.3 18.8 5.3c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.4 5.7.4.4.8 1.1.8 2.2v3.2c0 .4.2.7.8.6A11.5 11.5 0 0 0 12 .7Z"/></svg>
+      </a>
+    </nav>
   </header>
   <main class="shell">
     <section class="intro">
-      <p class="eyebrow">Durable games</p>
-      <h1>Every position comes from the signed log.</h1>
-      <p>The server replays the same fold used by the command line. This view cannot sign or submit moves.</p>
+      <p class="breadcrumb" aria-current="page">Lobby</p>
+      <h1>durable games: chess</h1>
     </section>
     {{if .Games}}
     <ol class="game-list">
@@ -24,8 +28,9 @@
       <li>
         <a class="game-card" href="/game?game={{urlquery .ID}}">
           <span class="game-state {{.Status}}">{{.Status}}</span>
-          <strong>{{if .LastMoveUCI}}{{.LastMoveUCI}}{{else}}New game{{end}}</strong>
-          <span>{{if .White}}White seated{{else}}White open{{end}} · {{if .Black}}Black seated{{else}}Black open{{end}}</span>
+          <strong>{{if .Name}}{{.Name}}{{else}}New game{{end}}</strong>
+          <span>{{if .White}}White seated{{else if .AdmissionOpen}}White open{{else}}White restricted{{end}} · {{if .Black}}Black seated{{else if .AdmissionOpen}}Black open{{else}}Black restricted{{end}}</span>
+          {{if .LastMoveUCI}}<span>Last move <code>{{.LastMoveUCI}}</code></span>{{end}}
           <code title="{{.ID}}">{{.ID}}</code>
         </a>
       </li>
@@ -39,5 +44,10 @@
     {{end}}
     {{if .RefusedTotal}}<p class="refusals">The fold has refused {{.RefusedTotal}} recorded act{{if ne .RefusedTotal 1}}s{{end}}.</p>{{end}}
   </main>
+  <dialog class="help-dialog" data-help-dialog aria-labelledby="help-title">
+    <form method="dialog"><button class="dialog-close" aria-label="Close help">×</button></form>
+    <h2 id="help-title">How to play</h2>
+    <p>Choose a game to see its durable board, players, live presence, and chat. Signed joins and moves are made with the command line or the gitseq-chess MCP server.</p>
+  </dialog>
 </body>
 </html>

@@ -139,6 +139,7 @@ func runCreate(ctx context.Context, args []string, stdout io.Writer, stdin io.Re
 	set := flag.NewFlagSet("create", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
 	common := addCommon(set, true)
+	name := set.String("name", "", "short display name for the game")
 	color := set.String("color", "white", "creator color: white or black")
 	inviteKey := set.String("invite-key", "", "invited opponent fingerprint")
 	// The secret is read from a file or from standard input, never taken as a
@@ -156,7 +157,7 @@ func runCreate(ctx context.Context, args []string, stdout io.Writer, stdin io.Re
 	if err != nil {
 		return err
 	}
-	record, err := application.Create(ctx, workspace, key, *color, *inviteKey, joinSecret, common.idem)
+	record, err := application.CreateNamed(ctx, workspace, key, *name, *color, *inviteKey, joinSecret, common.idem)
 	if err != nil {
 		return err
 	}
@@ -403,7 +404,7 @@ func mcpTools() []map[string]any {
 		{"name": "list_games", "description": "List a bounded page of games at the verified frontier", "inputSchema": object(map[string]any{"after": stringField("Last game identifier from the preceding page"), "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}})},
 		{"name": "show_board", "description": "Show one folded game", "inputSchema": object(game, "game")},
 		{"name": "legal_destinations", "description": "List legal destinations from a square", "inputSchema": object(map[string]any{"game": game["game"], "from": stringField("Source square such as e2")}, "game", "from")},
-		{"name": "create", "description": "Create a game", "inputSchema": object(map[string]any{"color": stringField("white or black"), "invite_key": stringField("Optional opponent fingerprint"), "join_secret": stringField("Optional invitation secret"), "idempotency_key": stringField("Stable retry key")}, "color")},
+		{"name": "create", "description": "Create a named game", "inputSchema": object(map[string]any{"name": stringField("Optional short display name"), "color": stringField("white or black"), "invite_key": stringField("Optional opponent fingerprint"), "join_secret": stringField("Optional invitation secret"), "idempotency_key": stringField("Stable retry key")}, "color")},
 		{"name": "join", "description": "Join a game", "inputSchema": object(map[string]any{"game": game["game"], "secret": stringField("Invitation secret"), "idempotency_key": stringField("Stable retry key")}, "game")},
 		{"name": "move", "description": "Play a move", "inputSchema": object(map[string]any{"game": game["game"], "move": stringField("UCI move such as e2e4"), "idempotency_key": stringField("Stable retry key")}, "game", "move")},
 		{"name": "resign", "description": "Resign a game", "inputSchema": object(map[string]any{"game": game["game"], "idempotency_key": stringField("Stable retry key")}, "game")},
@@ -474,7 +475,8 @@ func callTool(ctx context.Context, common *commonFlags, params callParams) (any,
 		if !ok {
 			return nil, errors.New("game does not exist")
 		}
-		return map[string]any{"destinations": application.LegalDestinations(game, arguments.From), "head": projection.Head}, nil
+		selection := application.LegalSelection(game, arguments.From)
+		return map[string]any{"destinations": selection.Destinations, "reason": selection.Reason, "head": projection.Head}, nil
 	}
 	workspace, key, err := openWriter(ctx, common)
 	if err != nil {
@@ -484,13 +486,14 @@ func callTool(ctx context.Context, common *commonFlags, params callParams) (any,
 	switch params.Name {
 	case "create":
 		var arguments struct {
+			Name           string `json:"name,omitempty"`
 			Color          string `json:"color"`
 			InviteKey      string `json:"invite_key,omitempty"`
 			JoinSecret     string `json:"join_secret,omitempty"`
 			IdempotencyKey string `json:"idempotency_key,omitempty"`
 		}
 		if err = decodeArguments(params.Arguments, &arguments); err == nil {
-			record, err = application.Create(ctx, workspace, key, arguments.Color, arguments.InviteKey, arguments.JoinSecret, arguments.IdempotencyKey)
+			record, err = application.CreateNamed(ctx, workspace, key, arguments.Name, arguments.Color, arguments.InviteKey, arguments.JoinSecret, arguments.IdempotencyKey)
 		}
 	case "join":
 		var arguments struct {
@@ -566,7 +569,7 @@ func decodeArguments(data json.RawMessage, target any) error {
 func actionResult(ctx context.Context, workspace *host.Workspace, record host.Record) (map[string]any, error) {
 	effective, found, reason, err := application.Decision(ctx, workspace, record.ID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("record %s was durably appended, but its decision could not be read: %w", record.ID, err)
 	}
 	result := map[string]any{"record": record.ID, "effective": effective}
 	if !found {

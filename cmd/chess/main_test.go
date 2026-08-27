@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -53,7 +55,7 @@ func TestCommandsInitializeAndPlayThroughThePublicHost(t *testing.T) {
 	if err := os.WriteFile(secretFile, []byte("one use\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	created := call("create", "--repo", repo, "--color", "white", "--join-secret-file", secretFile)
+	created := call("create", "--repo", repo, "--name", "First game", "--color", "white", "--join-secret-file", secretFile)
 	game, ok := created["game"].(string)
 	if !ok || game == "" || created["effective"] != true || created["invitation"] == "" {
 		t.Fatalf("create output = %+v", created)
@@ -75,6 +77,10 @@ func TestCommandsInitializeAndPlayThroughThePublicHost(t *testing.T) {
 	if wrongTurn["effective"] != false || wrongTurn["reason"] != "actor does not hold the side to move" {
 		t.Fatalf("wrong-turn output = %+v", wrongTurn)
 	}
+	emptySource := call("move", "--repo", repo, "--game", game, "--move", "e3e4")
+	if emptySource["effective"] != false || !strings.Contains(emptySource["reason"].(string), "the square is empty") {
+		t.Fatalf("empty-source output = %+v", emptySource)
+	}
 	whiteMove := call("move", "--repo", repo, "--game", game, "--move", "e2e4")
 	if whiteMove["effective"] != true {
 		t.Fatalf("white move output = %+v", whiteMove)
@@ -84,7 +90,7 @@ func TestCommandsInitializeAndPlayThroughThePublicHost(t *testing.T) {
 		t.Fatalf("black move output = %+v", blackMove)
 	}
 	board := call("board", "--repo", repo, "--game", game)
-	if board["moves"] != float64(2) || board["turn"] != "w" {
+	if board["name"] != "First game" || board["moves"] != float64(2) || board["turn"] != "w" {
 		t.Fatalf("board output = %+v", board)
 	}
 	resigned := call("resign", "--repo", repo, "--key", bob, "--game", game)
@@ -97,6 +103,36 @@ func TestCommandsInitializeAndPlayThroughThePublicHost(t *testing.T) {
 	}
 	if err := run(ctx, []string{"board", "--repo", repo, "--game", game, "ignored"}, io.Discard, bytes.NewReader(nil)); err == nil {
 		t.Fatal("board silently accepted an extra positional argument")
+	}
+}
+
+func TestActionResultSurfacesDurableRecordWhenDecisionReadFails(t *testing.T) {
+	requireWritableKeyCustody(t)
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "decision-read-failure")
+	if err := run(ctx, []string{"init", "--repo", repo}, io.Discard, bytes.NewReader(nil)); err != nil {
+		t.Fatal(err)
+	}
+	workspace, signer, err := openWriter(ctx, &commonFlags{repo: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := application.CreateNamed(ctx, workspace, signer, "Durable name", "white", "", "", "read-failure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := actionResult(canceled, workspace, record); err == nil || !strings.Contains(err.Error(), record.ID) || !strings.Contains(err.Error(), "durably appended") {
+		t.Fatalf("decision read error = %v, want durable record %s", err, record.ID)
+	}
+	_, projection, err := application.OpenProjection(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, ok := projection.GameByID(record.ID)
+	if !ok || game.Name != "Durable name" || !game.AdmissionOpen {
+		t.Fatalf("durable game after read failure = %+v, found %v", game, ok)
 	}
 }
 
@@ -217,7 +253,7 @@ func TestMCPToolsCallEveryActAndBoundedQueries(t *testing.T) {
 		return structured
 	}
 
-	create := call(alice, "create", map[string]any{"color": "white", "join_secret": "mcp invite"})
+	create := call(alice, "create", map[string]any{"name": "MCP match", "color": "white", "join_secret": "mcp invite"})
 	game, _ := create["game"].(string)
 	if game == "" {
 		// Tool create returns record; a create record is the game identifier.
@@ -239,7 +275,7 @@ func TestMCPToolsCallEveryActAndBoundedQueries(t *testing.T) {
 	}
 	board := call(alice, "show_board", map[string]any{"game": game})
 	shown, ok := board["game"].(application.Game)
-	if !ok || shown.LastMoveUCI != "e2e4" {
+	if !ok || shown.Name != "MCP match" || shown.LastMoveUCI != "e2e4" {
 		t.Fatalf("board = %+v", board)
 	}
 	if offered := call(alice, "draw_offer", map[string]any{"game": game}); offered["effective"] != true {
@@ -436,7 +472,7 @@ func TestEmbeddedUIRendersTheExactFoldedPositionAndSeats(t *testing.T) {
 		return decoded
 	}
 	call("init", "--repo", repo)
-	created := call("create", "--repo", repo, "--color", "white")
+	created := call("create", "--repo", repo, "--name", "Opening lesson", "--color", "white")
 	gameID := created["game"].(string)
 	bob := filepath.Join(t.TempDir(), "bob.key")
 	call("join", "--repo", repo, "--key", bob, "--game", gameID)
@@ -445,6 +481,23 @@ func TestEmbeddedUIRendersTheExactFoldedPositionAndSeats(t *testing.T) {
 	if refused["effective"] != false {
 		t.Fatalf("wrong-turn move unexpectedly effective: %+v", refused)
 	}
+	openID := call("create", "--repo", repo, "--name", "Agent match", "--color", "white")["game"].(string)
+	whiteOpenID := call("create", "--repo", repo, "--name", "White seat open", "--color", "black")["game"].(string)
+	restrictedSecret := filepath.Join(t.TempDir(), "restricted.secret")
+	if err := os.WriteFile(restrictedSecret, []byte("not in the projection\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secretID := call("create", "--repo", repo, "--name", "Secret match", "--color", "white", "--join-secret-file", restrictedSecret)["game"].(string)
+	whiteRestrictedID := call("create", "--repo", repo, "--name", "White seat restricted", "--color", "black", "--join-secret-file", restrictedSecret)["game"].(string)
+	invitePublic, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inviteFingerprint, err := live.ActorFingerprint(invitePublic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inviteID := call("create", "--repo", repo, "--name", "Invited match", "--color", "white", "--invite-key", inviteFingerprint)["game"].(string)
 
 	_, projection, err := application.OpenProjection(ctx, repo)
 	if err != nil {
@@ -463,10 +516,41 @@ func TestEmbeddedUIRendersTheExactFoldedPositionAndSeats(t *testing.T) {
 		t.Fatalf("lobby status = %d: %s", lobbyResponse.Code, lobbyResponse.Body.String())
 	}
 	lobby := lobbyResponse.Body.String()
-	for _, want := range []string{projection.Head, url.QueryEscape(gameID), "playing", "e2e4"} {
+	for _, want := range []string{projection.Head, url.QueryEscape(gameID), "playing", "e2e4", "Opening lesson", "Agent match", "durable games: chess", ">Lobby<", "GitHub repository"} {
 		if !strings.Contains(lobby, want) {
 			t.Errorf("lobby does not contain %q", want)
 		}
+	}
+	for _, forbidden := range []string{"Verified frontier", "Every position comes from the signed log", "MCP <code>join</code>", "For an open game"} {
+		if strings.Contains(lobby, forbidden) {
+			t.Errorf("lobby still contains retired copy %q", forbidden)
+		}
+	}
+	cardFor := func(game string) string {
+		t.Helper()
+		start := strings.Index(lobby, `href="/game?game=`+url.QueryEscape(game)+`"`)
+		if start < 0 {
+			t.Fatalf("lobby does not contain card for %s", game)
+		}
+		end := strings.Index(lobby[start:], "</a>")
+		if end < 0 {
+			t.Fatalf("lobby card for %s has no end", game)
+		}
+		return lobby[start : start+end]
+	}
+	if card := cardFor(openID); !strings.Contains(card, "White seated · Black open") || strings.Contains(card, "Black restricted") {
+		t.Errorf("open-game card has wrong admission copy: %s", card)
+	}
+	if card := cardFor(whiteOpenID); !strings.Contains(card, "White open · Black seated") || strings.Contains(card, "White restricted") {
+		t.Errorf("white-open game card has wrong admission copy: %s", card)
+	}
+	for _, restrictedID := range []string{secretID, inviteID} {
+		if card := cardFor(restrictedID); !strings.Contains(card, "White seated · Black restricted") || strings.Contains(card, "Black open") {
+			t.Errorf("restricted-game card %s has wrong admission copy: %s", restrictedID, card)
+		}
+	}
+	if card := cardFor(whiteRestrictedID); !strings.Contains(card, "White restricted · Black seated") || strings.Contains(card, "White open") {
+		t.Errorf("white-restricted game card has wrong admission copy: %s", card)
 	}
 	if csp := lobbyResponse.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") || strings.Contains(csp, "unsafe-inline") {
 		t.Errorf("Content-Security-Policy = %q", csp)
@@ -481,13 +565,79 @@ func TestEmbeddedUIRendersTheExactFoldedPositionAndSeats(t *testing.T) {
 	page := gameResponse.Body.String()
 	for _, want := range []string{
 		projection.Head, game.ID, game.White, game.Black, game.FEN,
-		`data-square="e4" aria-label="white pawn at e4"><span aria-hidden="true">♙</span>`,
-		`data-square="e2" aria-label="empty at e2"><span aria-hidden="true"></span>`,
-		"Read-only view",
+		`data-square="e4" title="e4" aria-label="white pawn at e4"><span aria-hidden="true">♙</span>`,
+		`data-square="e2" title="e2" aria-label="empty at e2"><span aria-hidden="true"></span>`,
+		"read-only board", "Opening lesson", ">Lobby</a>", "No chat messages yet.",
 		"Refused recorded acts", "actor does not hold the side to move",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("game page does not contain %q", want)
+		}
+	}
+	if strings.Contains(page, "Verified frontier") || strings.Contains(page, "No messages in this process-local room.") {
+		t.Error("game page still contains retired frontier or chat copy")
+	}
+
+	gamePage := func(game string) string {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "/game?game="+url.QueryEscape(game), nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("game %s status = %d", game, response.Code)
+		}
+		return response.Body.String()
+	}
+	for _, open := range []struct {
+		id, emptySide string
+	}{{openID, "Black"}, {whiteOpenID, "White"}} {
+		openPage := gamePage(open.id)
+		for _, want := range []string{"This game has an open seat", "gitseq-chess MCP", "join", open.id} {
+			if !strings.Contains(openPage, want) {
+				t.Errorf("open-game %s help does not contain %q", open.id, want)
+			}
+		}
+		openSeat := "<dt>" + open.emptySide + "</dt><dd>Open</dd>"
+		restrictedSeat := "<dt>" + open.emptySide + "</dt><dd>Restricted</dd>"
+		if !strings.Contains(openPage, openSeat) || strings.Contains(openPage, restrictedSeat) {
+			t.Errorf("open-game page %s has wrong %s-seat copy: %s", open.id, open.emptySide, openPage)
+		}
+		openGame, _ := projection.GameByID(open.id)
+		if !openGame.AdmissionOpen {
+			t.Errorf("open game %s does not expose its non-secret admission predicate", open.id)
+		}
+	}
+	secretDigest := sha256.Sum256([]byte("not in the projection"))
+	secretHash := hex.EncodeToString(secretDigest[:])
+	for _, restricted := range []struct {
+		id, emptySide string
+	}{{secretID, "Black"}, {inviteID, "Black"}, {whiteRestrictedID, "White"}} {
+		restrictedID := restricted.id
+		restrictedGame, _ := projection.GameByID(restrictedID)
+		if restrictedGame.AdmissionOpen {
+			t.Errorf("restricted game %s claims open admission", restrictedID)
+		}
+		restrictedPage := gamePage(restrictedID)
+		if strings.Contains(restrictedPage, "This game has an open seat") || strings.Contains(restrictedPage, "MCP <code>join</code>") {
+			t.Errorf("restricted game %s advertises an open MCP join", restrictedID)
+		}
+		restrictedSeat := "<dt>" + restricted.emptySide + "</dt><dd>Restricted</dd>"
+		openSeat := "<dt>" + restricted.emptySide + "</dt><dd>Open</dd>"
+		if !strings.Contains(restrictedPage, restrictedSeat) || strings.Contains(restrictedPage, openSeat) {
+			t.Errorf("restricted-game page %s has wrong %s-seat copy: %s", restrictedID, restricted.emptySide, restrictedPage)
+		}
+		for _, private := range []string{"not in the projection", secretHash, inviteFingerprint, "secret_hash", "opponent_key"} {
+			if strings.Contains(restrictedPage, private) {
+				t.Errorf("restricted-game page %s exposed private invitation material %q", restrictedID, private)
+			}
+		}
+
+		boardRequest := httptest.NewRequest(http.MethodGet, "/v1/board?game="+url.QueryEscape(restrictedID), nil)
+		boardResponse := httptest.NewRecorder()
+		handler.ServeHTTP(boardResponse, boardRequest)
+		body := boardResponse.Body.String()
+		if !strings.Contains(body, `"admission_open":false`) || strings.Contains(body, "secret_hash") || strings.Contains(body, "opponent_key") {
+			t.Errorf("restricted board exposed more than its admission predicate: %s", body)
 		}
 	}
 
@@ -571,6 +721,42 @@ func TestEmbeddedBrowserAssetsHaveNoSigningKeySurface(t *testing.T) {
 			if !strings.Contains(body, `generateKey({name: "Ed25519"}, false`) || !strings.Contains(body, "/v1/live/observe") {
 				t.Error("browser JavaScript does not use an in-memory non-exportable live key and separate live observation")
 			}
+			for _, want := range []string{"No chat messages yet.", "No valid move is available from", "showModal"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("browser JavaScript does not contain %q", want)
+				}
+			}
+			for _, forbidden := range []string{"The process-local live room restarted. Its transient history was cleared.", "The fold allows no move from that square."} {
+				if strings.Contains(body, forbidden) {
+					t.Errorf("browser JavaScript still contains retired copy %q", forbidden)
+				}
+			}
+		} else {
+			body := response.Body.String()
+			for _, want := range []string{"grid-template-rows: repeat(8", "aspect-ratio: 1", "resize: both"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("browser CSS does not enforce %q", want)
+				}
+			}
+		}
+	}
+}
+
+func TestREADMEWalkthroughCreatesKeysNamesAJoinedGameAndPlays(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readme := string(source)
+	for _, want := range []string{
+		"There is no separate\nkey-generation command",
+		`--name "First game"`,
+		"--key bob.key --game '<game-id>'",
+		"--move e2e4",
+		"--key bob.key --game '<game-id>' --move e7e5",
+	} {
+		if !strings.Contains(readme, want) {
+			t.Errorf("first-game walkthrough does not contain %q", want)
 		}
 	}
 }

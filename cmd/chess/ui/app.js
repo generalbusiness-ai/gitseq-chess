@@ -13,6 +13,13 @@
   let cursor = {durable: {genesis: "", head: "", depth: 0}, live: {generation: "", position: 0}};
   const seenMotion = new Set();
 
+  const helpDialog = document.querySelector("[data-help-dialog]");
+  document.querySelectorAll("[data-help-open]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (helpDialog && typeof helpDialog.showModal === "function") helpDialog.showModal();
+    });
+  });
+
   function bytesToBase64(value) {
     const bytes = new Uint8Array(value);
     let binary = "";
@@ -75,10 +82,11 @@
         clearDestinations();
         square.classList.add("selected");
         selectedFrom = square.dataset.square;
-        help.textContent = "Checking the folded position…";
+        const source = selectedFrom;
+        help.textContent = "Checking the durable position…";
         const endpoint = new URL("/v1/legal", window.location.origin);
         endpoint.searchParams.set("game", game);
-        endpoint.searchParams.set("from", selectedFrom);
+        endpoint.searchParams.set("from", source);
         try {
           const response = await fetch(endpoint, {headers: {Accept: "application/json"}, credentials: "omit"});
           if (!response.ok) throw new Error("legal-destination query failed");
@@ -87,17 +95,18 @@
             window.location.reload();
             return;
           }
+          if (selectedFrom !== source) return;
           destinations = Array.isArray(result.destinations) ? result.destinations : [];
           destinations.forEach((destination) => {
             const target = squares.get(String(destination).slice(0, 2));
             if (target) target.classList.add("legal");
           });
-          if (destinations.length) await publishMotion("dragged", selectedFrom);
+          if (destinations.length) await publishMotion("dragged", source);
           help.textContent = destinations.length
-            ? `The fold allows ${destinations.join(", ")}. Select a destination to preview it live.`
-            : "The fold allows no move from that square.";
+            ? `Valid moves from ${source}: ${destinations.join(", ")}. Select a destination to preview it live.`
+            : `No valid move is available from ${source}${result.reason ? `: ${result.reason}.` : "."}`;
         } catch (_error) {
-          help.textContent = "The folded position could not be checked.";
+          help.textContent = "The durable position could not be checked.";
         }
       });
     });
@@ -132,7 +141,7 @@
     list.replaceChildren();
     if (!messages.length) {
       const empty = document.createElement("li");
-      empty.textContent = "No messages in this process-local room.";
+      empty.textContent = "No chat messages yet.";
       list.append(empty);
       return;
     }
@@ -188,10 +197,6 @@
         renderParticipants(result.participants || []);
         renderChat(result.chat || []);
         renderMotion(result.motions || [], initial, result.reset);
-        if (result.reset) {
-          const status = document.getElementById("live-status");
-          if (status) status.textContent = "The process-local live room restarted. Its transient history was cleared.";
-        }
       } catch (_error) {
         await new Promise((resolve) => window.setTimeout(resolve, 1500));
       }

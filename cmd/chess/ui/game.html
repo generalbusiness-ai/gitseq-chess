@@ -3,31 +3,54 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Game · Gitseq Chess</title>
+  <title>{{if .Game.Name}}{{.Game.Name}} · {{end}}durable games: chess</title>
   <link rel="stylesheet" href="/assets/app.css">
   <script src="/assets/app.js" defer></script>
 </head>
 <body data-head="{{.Head}}" data-view="game" data-game="{{.Game.ID}}">
   <header class="masthead">
-    <a class="wordmark" href="/">Gitseq Chess</a>
-    <span class="frontier" title="{{.Head}}">Verified frontier <code>{{.Head}}</code></span>
+    <a class="wordmark" href="/">durable games: chess</a>
+    <nav class="toolbar" aria-label="Site links">
+      <button class="icon-button" type="button" data-help-open aria-label="How to play">?</button>
+      <a class="icon-button" href="https://github.com/generalbusiness-ai/gitseq-chess" aria-label="GitHub repository" title="GitHub repository">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .7a11.5 11.5 0 0 0-3.6 22.4c.6.1.8-.2.8-.6v-2.2c-3.3.7-4-1.4-4-1.4-.5-1.4-1.3-1.8-1.3-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.4-1.3-5.4-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.2 1.2a11 11 0 0 1 5.8 0C17.8 5 18.8 5.3 18.8 5.3c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.4 5.7.4.4.8 1.1.8 2.2v3.2c0 .4.2.7.8.6A11.5 11.5 0 0 0 12 .7Z"/></svg>
+      </a>
+    </nav>
   </header>
   <main class="shell game-shell">
     <section class="game-summary">
-      <p class="eyebrow"><a href="/">Lobby</a> / game</p>
-      <h1>{{.Game.Status}}{{if .Game.Turn}} · {{.Game.Turn}} to move{{end}}</h1>
+      <p class="breadcrumb"><a href="/">Lobby</a> / {{if .Game.Name}}{{.Game.Name}}{{else}}game{{end}}</p>
+      <h1>{{if .Game.Name}}{{.Game.Name}}{{else}}Game{{end}}</h1>
+      <p class="game-status">{{.Game.Status}}{{if .Game.Turn}} · {{.Game.Turn}} to move{{end}}</p>
       {{if .Game.Outcome}}<p class="outcome">{{.Game.Outcome}} by {{.Game.Method}}</p>{{end}}
       <dl class="seats">
-        <div><dt>White</dt><dd>{{if .Game.White}}<code>{{.Game.White}}</code>{{else}}Open{{end}}</dd></div>
-        <div><dt>Black</dt><dd>{{if .Game.Black}}<code>{{.Game.Black}}</code>{{else}}Open{{end}}</dd></div>
+        <div><dt>White</dt><dd>{{if .Game.White}}<code>{{.Game.White}}</code>{{else if .Game.AdmissionOpen}}Open{{else}}Restricted{{end}}</dd></div>
+        <div><dt>Black</dt><dd>{{if .Game.Black}}<code>{{.Game.Black}}</code>{{else if .Game.AdmissionOpen}}Open{{else}}Restricted{{end}}</dd></div>
       </dl>
-      <p class="read-only">Read-only view. Use the command line or MCP adapter to make a signed move.</p>
+    </section>
+    <section class="play-area">
+      <section class="board-panel" aria-label="Chess board">
+        <div class="board" data-game="{{.Game.ID}}" data-fen="{{.Game.FEN}}">
+          {{range .Squares}}<button class="square {{if .Dark}}dark{{else}}light{{end}}" type="button" data-square="{{.Name}}" title="{{.Name}}" aria-label="{{.Label}}"><span aria-hidden="true">{{.Piece}}</span></button>{{end}}
+        </div>
+        <p id="move-help" class="move-help" aria-live="polite">Select a piece to see its valid destinations.</p>
+        <p class="read-only">This is a read-only board. Use the command line or MCP adapter to make a signed move.</p>
+        <div class="position-meta">
+          <span>Moves {{.Game.Moves}}</span>
+          {{if .Game.LastMoveUCI}}<span>Last move <code>{{.Game.LastMoveUCI}}</code></span>{{end}}
+          {{if .Game.DrawOffer}}<span>Draw offered by <code>{{.Game.OfferedBy}}</code></span>{{end}}
+        </div>
+        <details>
+          <summary>Durable position</summary>
+          <code class="fen">{{.Game.FEN}}</code>
+          <code class="game-id">{{.Game.ID}}</code>
+        </details>
       {{if .Refused}}<section class="game-refusals" aria-labelledby="refusals-title">
         <h2 id="refusals-title">Refused recorded acts</h2>
-        <p>The folded board did not change for these acts. A provisional move snaps back to this durable position.</p>
+        <p>The durable board did not change for these acts. A provisional move snaps back to this position.</p>
         <ol>{{range .Refused}}<li><strong>{{.Reason}}</strong> <code>{{.Record}}</code></li>{{end}}</ol>
       </section>{{end}}
-      <p id="move-help" class="move-help" aria-live="polite">Select a piece to ask the fold for its legal destinations.</p>
+      </section>
       <section class="live-panel" aria-labelledby="live-title">
         <div class="live-heading">
           <h2 id="live-title">Live room</h2>
@@ -37,28 +60,19 @@
         <h3>Here now</h3>
         <ul id="participants" class="participants"><li>No live participants.</li></ul>
         <h3>Chat</h3>
-        <ol id="chat-log" class="chat-log"><li>No messages in this process-local room.</li></ol>
+        <ol id="chat-log" class="chat-log"><li>No chat messages yet.</li></ol>
         <form id="chat-form" class="chat-form">
           <label for="chat-text">Message</label>
           <div><input id="chat-text" name="text" maxlength="16384" disabled><button type="submit" disabled>Send</button></div>
         </form>
       </section>
     </section>
-    <section class="board-panel" aria-label="Chess board">
-      <div class="board" data-game="{{.Game.ID}}" data-fen="{{.Game.FEN}}">
-        {{range .Squares}}<button class="square {{if .Dark}}dark{{else}}light{{end}}" type="button" data-square="{{.Name}}" aria-label="{{.Label}}"><span aria-hidden="true">{{.Piece}}</span></button>{{end}}
-      </div>
-      <div class="position-meta">
-        <span>Moves {{.Game.Moves}}</span>
-        {{if .Game.LastMoveUCI}}<span>Last move <code>{{.Game.LastMoveUCI}}</code></span>{{end}}
-        {{if .Game.DrawOffer}}<span>Draw offered by <code>{{.Game.OfferedBy}}</code></span>{{end}}
-      </div>
-      <details>
-        <summary>Folded position</summary>
-        <code class="fen">{{.Game.FEN}}</code>
-        <code class="game-id">{{.Game.ID}}</code>
-      </details>
-    </section>
   </main>
+  <dialog class="help-dialog" data-help-dialog aria-labelledby="help-title">
+    <form method="dialog"><button class="dialog-close" aria-label="Close help">×</button></form>
+    <h2 id="help-title">How to play</h2>
+    <p>Watch the durable position here, and use the command line or gitseq-chess MCP server for signed game actions. Presence, motion previews, and chat in this page are temporary.</p>
+    {{if and .Game.AdmissionOpen (or (not .Game.White) (not .Game.Black))}}<p class="join-instruction">This game has an open seat. Tell your agent: “Use the gitseq-chess MCP <code>join</code> tool to join game <code>{{.Game.ID}}</code>.”</p>{{end}}
+  </dialog>
 </body>
 </html>

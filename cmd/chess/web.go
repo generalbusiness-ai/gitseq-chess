@@ -188,7 +188,8 @@ func newReadHandlerWithLive(_ context.Context, repo string, runtime *chessLive) 
 			http.Error(w, "game does not exist", http.StatusNotFound)
 			return
 		}
-		serveJSON(w, map[string]any{"destinations": application.LegalDestinations(game, query.Get("from")), "head": projection.Head})
+		selection := application.LegalSelection(game, query.Get("from"))
+		serveJSON(w, map[string]any{"destinations": selection.Destinations, "reason": selection.Reason, "head": projection.Head})
 	})
 	runtime.register(mux, read)
 	return securityHeaders(rejectLiveQueries(trustedLiveHost(mux)))

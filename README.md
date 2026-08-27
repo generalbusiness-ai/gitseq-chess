@@ -11,31 +11,66 @@ gitseq commit it was built against in `go.mod`. The fold is pure: it uses record
 order and signed sequencer timestamps, with no network, local clock, or mutable
 cache.
 
-## Run locally
+## Play your first game
 
-Build the one binary, then initialize a data repository:
+Build the binary and initialize a repository for the game records:
 
 ```sh
 go build -o chess ./cmd/chess
-mkdir game-data
 ./chess init --repo game-data
+```
+
+`init` creates the repository, its sequencer key, and the first player's key.
+Its JSON output names that key in `player_key`. There is no separate
+key-generation command: when a signed command uses a missing `--key` path,
+chess creates that player key securely. This is how `bob.key` is created in the
+walkthrough below. Keep every player's key private and use a different key for
+each player or agent.
+
+Create a named game as White. The output's `game` value is the durable game
+identifier; copy it in place of `<game-id>` in the remaining commands.
+
+```sh
+./chess create --repo game-data --name "First game" --color white
+```
+
+Join as the second player. Because `bob.key` does not exist yet, this command
+creates it before signing Bob's join:
+
+```sh
+./chess join --repo game-data --key bob.key --game '<game-id>'
+```
+
+Play in UCI notation (`e2e4` means move from e2 to e4), alternating the first
+player's managed key and Bob's named key. A promotion appends the chosen piece:
+for example, `a7b8q` promotes to a queen; use `r`, `b`, or `n` for another piece.
+
+```sh
+./chess move --repo game-data --game '<game-id>' --move e2e4
+./chess move --repo game-data --key bob.key --game '<game-id>' --move e7e5
+./chess board --repo game-data --game '<game-id>'
+```
+
+Each write reports its accepted record identifier and an `effective` decision.
+An illegal move or a lost join race remains in the history with a short refusal
+reason, but does not change the game.
+
+To watch the board and use temporary presence and chat, start the local web
+view and open the printed address:
+
+```sh
 ./chess serve --repo game-data
 ```
 
 `serve` listens on `127.0.0.1:8080` by default. You may choose another
 loopback address with `--listen`; the command refuses non-loopback addresses so
-the local live-room service cannot be exposed accidentally.
+the local live-room service cannot be exposed accidentally. Board, HTTP, and
+MCP responses never include key material.
 
-`init` creates the repository's binding, sequencer key, and first local player
-key. Board, HTTP, and MCP responses never include key material.
+### Invite with a shared secret
 
-Create a game with an open seat:
-
-```sh
-./chess create --repo game-data --color white
-```
-
-Or create a secret invitation. The log contains only the SHA-256 hash until the
+An open game accepts the first valid join. To invite someone privately instead,
+create the game with a secret. The log contains only the SHA-256 hash until the
 join is submitted; the returned link keeps the secret in its URL fragment.
 
 The secret is read from a file, or from standard input when the file is named
@@ -46,25 +81,18 @@ long as the command runs.
 ```sh
 printf 'shared-once' > invitation.secret
 chmod 600 invitation.secret
-./chess create --repo game-data --color white --join-secret-file invitation.secret
+./chess create --repo game-data --name "Private game" --color white --join-secret-file invitation.secret
 ```
 
 Naming a source that turns out to be empty is an error rather than an absent
 secret, so a mistyped path cannot quietly create an invitation anyone can
 accept. Omit the flag when an open seat is what you want.
 
-Use another key file for the opponent, then play in UCI notation:
+Give the secret to the opponent out of band, then join with their key:
 
 ```sh
-./chess join --repo game-data --key bob.key --game '<create-record>' --secret-file invitation.secret
-./chess move --repo game-data --game '<create-record>' --move e2e4
-./chess move --repo game-data --key bob.key --game '<create-record>' --move e7e5
-./chess board --repo game-data --game '<create-record>'
+./chess join --repo game-data --key bob.key --game '<game-id>' --secret-file invitation.secret
 ```
-
-Give each player or agent a different key file. A command reports both the
-accepted record identifier and the fold's `effective` decision; illegal moves
-and lost join races remain in the history with a short refusal reason.
 
 ### Where the player key lives
 
@@ -149,6 +177,15 @@ the chosen key; tool results contain only public record data and fold decisions.
 
 - A create chooses the creator's color and an optional opponent key or hashed
   join secret. No invitation means an intentionally open, first-valid-join seat.
+  An unnamed game uses `chess/create@0`. A named game uses the single atomic
+  `chess/create-named@0` act, so a failed name cannot leave behind an open game
+  whose identifier was never returned to the caller.
+- The current application binding is `chess-fold@2`. Fold @1 introduced the
+  creator-only, display-only `chess/name@0` act without changing the exact bytes
+  or judgments of `chess/create@0`; fold @2 still understands those records but
+  adds the combined named-create judgment. A repository's binding is exact, so
+  this build cannot open existing repositories bound to fold @0 or fold @1, and
+  those older builds cannot open a repository bound to fold @2.
 - A join rests on the create. The first qualified join in log order seats.
 - The first move rests on the accepted join; every later move rests on the
   preceding accepted move. Wrong-turn, stale-chain, and illegal moves are
