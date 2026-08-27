@@ -42,6 +42,8 @@ func run(ctx context.Context, args []string, stdout io.Writer, stdin io.Reader) 
 	switch args[0] {
 	case "init":
 		return runInit(ctx, args[1:], stdout)
+	case "rebind":
+		return runRebind(ctx, args[1:], stdout, stdin)
 	case "serve":
 		return runServe(ctx, args[1:], stdout)
 	case "create":
@@ -62,7 +64,7 @@ func run(ctx context.Context, args []string, stdout io.Writer, stdin io.Reader) 
 }
 
 func usageError() error {
-	return errors.New("usage: chess <init|serve|create|join|move|board|resign|mcp> [options]")
+	return errors.New("usage: chess <init|rebind|serve|create|join|move|board|resign|mcp> [options]")
 }
 
 func runInit(ctx context.Context, args []string, stdout io.Writer) error {
@@ -97,6 +99,99 @@ func runInit(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 	return writeJSON(stdout, map[string]any{"repository": *repo, "genesis": log.Genesis, "player_key": keyPath})
+}
+
+var replaceApplicationBinding = host.ReplaceBinding
+
+// runRebind moves a repository from an older chess fold understood by this
+// build to the exact fold carried by this build. It deliberately reads an
+// existing key instead of calling ensureKey: losing the initializing key is
+// not authority to invent its replacement.
+func runRebind(ctx context.Context, args []string, stdout io.Writer, stdin io.Reader) error {
+	set := flag.NewFlagSet("rebind", flag.ContinueOnError)
+	set.SetOutput(io.Discard)
+	repo := set.String("repo", ".", "chess repository")
+	keyPath := set.String("key", "", "initializing player private-key file")
+	if err := parseNoPositionals(set, args); err != nil {
+		return err
+	}
+	if err := requireKeyCustodyPlatform(); err != nil {
+		return err
+	}
+
+	outgoing, log, err := readableOlderChessLog(ctx, *repo)
+	if err != nil {
+		return err
+	}
+	store, err := openKeyStore(ctx, *keyPath, *repo, *keyPath != "")
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	key, err := readKey(store)
+	if err != nil {
+		return fmt.Errorf("read initializing player key: %w", err)
+	}
+	if len(log.Records) == 0 || !bytes.Equal(key.Public().(ed25519.PublicKey), log.Records[0].ActorKey) {
+		return errors.New("binding replacement requires the initializing actor's key")
+	}
+
+	if err := confirmRebind(stdin, stdout, outgoing, application.FoldVersion); err != nil {
+		return err
+	}
+	replacement, err := replaceApplicationBinding(ctx, *repo, application.Application, key)
+	if err != nil {
+		return err
+	}
+	if _, err := host.Open(ctx, *repo, application.Application); err != nil {
+		return fmt.Errorf("binding was replaced but this build cannot open the repository: %w", err)
+	}
+	_, err = fmt.Fprintf(stdout, "Rebound chess repository from %s to %s.\n", replacement.OutgoingFoldVersion, replacement.IncomingFoldVersion)
+	return err
+}
+
+// readableOlderChessLog accepts only historical folds whose record vocabulary
+// the current fold still implements. Opening under the outgoing identity first
+// also verifies the sequence without weakening host.Open's exact binding rule.
+func readableOlderChessLog(ctx context.Context, repo string) (string, host.Log, error) {
+	if _, err := host.Open(ctx, repo, application.Application); err == nil {
+		return "", host.Log{}, fmt.Errorf("repository is already bound to %s", application.FoldVersion)
+	} else if !errors.Is(err, host.ErrUninterpretable) {
+		return "", host.Log{}, err
+	}
+	for _, version := range []string{"chess-fold@1", "chess-fold@0"} {
+		older := application.Application
+		older.FoldVersion = version
+		workspace, err := host.Open(ctx, repo, older)
+		if err == nil {
+			log, err := workspace.Records(ctx)
+			if err != nil {
+				return "", host.Log{}, err
+			}
+			// Folding before the replacement proves this build can read the target
+			// record stream. Fold is pure and represents malformed acts as refusals.
+			application.Fold(log)
+			return version, log, nil
+		}
+		if !errors.Is(err, host.ErrUninterpretable) {
+			return "", host.Log{}, err
+		}
+	}
+	return "", host.Log{}, errors.New("this build cannot interpret the repository binding as a supported older chess fold")
+}
+
+func confirmRebind(stdin io.Reader, stdout io.Writer, outgoing, incoming string) error {
+	if _, err := fmt.Fprintf(stdout, "Warning: records in this repository were folded under %s; after rebinding to %s, some records may be interpreted differently.\nType rebind to continue: ", outgoing, incoming); err != nil {
+		return err
+	}
+	answer, tooLong, err := bufio.NewReaderSize(stdin, 33).ReadLine()
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read rebind confirmation: %w", err)
+	}
+	if tooLong || strings.TrimSuffix(string(answer), "\r") != "rebind" {
+		return errors.New("binding replacement was not confirmed; type rebind exactly")
+	}
+	return nil
 }
 
 type commonFlags struct {

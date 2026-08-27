@@ -131,6 +131,29 @@ changes identity between being named and being opened, and any publication that
 is not exclusive. The program pins the operator-chosen parent after opening it,
 but does not validate that parent's permissions.
 
+### Rebind an older chess fold
+
+This build can rebind a repository from `chess-fold@0` or `chess-fold@1` to
+its current `chess-fold@2` rules:
+
+```sh
+./chess rebind --repo game-data
+```
+
+The command reads the existing managed `chess/player.key`; it never generates
+a key during recovery. Use `--key` only when the initializing key is already in
+the explicit custody location you name. No other player key is authorized,
+because the actor who signed the repository's first record is the binding
+authority.
+
+Before appending the replacement, the command warns that old records were
+folded under different rules and may be interpreted differently. Type
+`rebind` exactly to confirm. Success prints the old and new fold versions. An
+already-current binding, an unknown fold, a missing or unreadable key, or a key
+that does not belong to the initializing actor is refused without changing the
+record log. Rebinding appends one host binding record; it does not rewrite the
+existing Git objects or chess records.
+
 ## Web view, read service, and MCP
 
 `chess serve` prints the address of an embedded, read-only web interface. Its

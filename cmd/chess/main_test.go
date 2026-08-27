@@ -23,6 +23,7 @@ import (
 	"time"
 
 	application "github.com/generalbusiness-ai/gitseq-chess"
+	"github.com/generalbusiness-ai/gitseq/host"
 	"github.com/generalbusiness-ai/gitseq/host/live"
 )
 
@@ -30,6 +31,247 @@ func requireWritableKeyCustody(t *testing.T) {
 	t.Helper()
 	if err := requireKeyCustodyPlatform(); err != nil {
 		t.Skip(err)
+	}
+}
+
+func TestRebindOlderRepositoryUsesInitializerAndPreservesPriorObjects(t *testing.T) {
+	requireWritableKeyCustody(t)
+	ctx := context.Background()
+	repo, initializer, workspace := initializeRebindTestRepository(t, ctx, "chess-fold@1", true)
+	if _, err := application.Create(ctx, workspace, initializer, "white", "", "", "legacy-create"); err != nil {
+		t.Fatal(err)
+	}
+	beforeLog, err := workspace.Records(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeObjects := gitObjectSnapshot(t, repo)
+
+	original := replaceApplicationBinding
+	t.Cleanup(func() { replaceApplicationBinding = original })
+	replaceApplicationBinding = func(ctx context.Context, repo string, app host.Application, signer ed25519.PrivateKey) (host.BindingReplacement, error) {
+		if !bytes.Equal(signer, initializer) {
+			t.Fatalf("ReplaceBinding signer is not the initializing key")
+		}
+		return original(ctx, repo, app, signer)
+	}
+
+	var output bytes.Buffer
+	if err := run(ctx, []string{"rebind", "--repo", repo}, &output, strings.NewReader("rebind\n")); err != nil {
+		t.Fatal(err)
+	}
+	if got := output.String(); !strings.Contains(got, "records in this repository were folded under chess-fold@1") ||
+		!strings.Contains(got, "Rebound chess repository from chess-fold@1 to chess-fold@2.") {
+		t.Fatalf("rebind output = %q", got)
+	}
+	current, err := host.Open(ctx, repo, application.Application)
+	if err != nil {
+		t.Fatalf("current build cannot open rebound repository: %v", err)
+	}
+	afterLog, err := current.Records(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterLog.Depth != beforeLog.Depth+1 || afterLog.Records[len(afterLog.Records)-1].Schema != "gitseq/app-binding@0" {
+		t.Fatalf("rebind changed depth from %d to %d with final schema %q", beforeLog.Depth, afterLog.Depth, afterLog.Records[len(afterLog.Records)-1].Schema)
+	}
+	assertGitObjectsUnchanged(t, repo, beforeObjects)
+}
+
+func TestRebindRefusesNonInitializingSignerWithoutPrompting(t *testing.T) {
+	requireWritableKeyCustody(t)
+	ctx := context.Background()
+	repo, _, workspace := initializeRebindTestRepository(t, ctx, "chess-fold@1", true)
+	before, err := workspace.Records(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongPath := filepath.Join(t.TempDir(), "wrong.key")
+	writeRebindTestKey(t, wrongPath)
+	var output bytes.Buffer
+	err = run(ctx, []string{"rebind", "--repo", repo, "--key", wrongPath}, &output, strings.NewReader("rebind\n"))
+	if err == nil || !strings.Contains(err.Error(), "initializing actor") {
+		t.Fatalf("non-initializing signer error = %v", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("non-initializing signer was prompted: %q", output.String())
+	}
+	after, err := workspace.Records(ctx)
+	if err != nil || after.Depth != before.Depth {
+		t.Fatalf("non-initializing signer changed depth from %d to %d: %v", before.Depth, after.Depth, err)
+	}
+}
+
+func TestRebindRefusesAlreadyCurrentBinding(t *testing.T) {
+	requireWritableKeyCustody(t)
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "current")
+	if err := run(ctx, []string{"init", "--repo", repo}, io.Discard, strings.NewReader("")); err != nil {
+		t.Fatal(err)
+	}
+	current, err := host.Open(ctx, repo, application.Application)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := current.Records(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	err = run(ctx, []string{"rebind", "--repo", repo}, &output, strings.NewReader("rebind\n"))
+	if err == nil || !strings.Contains(err.Error(), "already bound") {
+		t.Fatalf("already-current error = %v", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("already-current repository was prompted: %q", output.String())
+	}
+	after, err := current.Records(ctx)
+	if err != nil || after.Depth != before.Depth {
+		t.Fatalf("already-current rebind changed depth from %d to %d: %v", before.Depth, after.Depth, err)
+	}
+}
+
+func TestRebindRefusesMissingKeyWithoutGeneratingOne(t *testing.T) {
+	requireWritableKeyCustody(t)
+	ctx := context.Background()
+	repo, _, workspace := initializeRebindTestRepository(t, ctx, "chess-fold@1", false)
+	before, err := workspace.Records(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = run(ctx, []string{"rebind", "--repo", repo}, io.Discard, strings.NewReader("rebind\n"))
+	if err == nil || !strings.Contains(err.Error(), "read initializing player key") || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing-key error = %v", err)
+	}
+	common, err := gitCommonDir(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(common, "chess", "player.key")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("rebind generated a missing key: %v", err)
+	}
+	after, err := workspace.Records(ctx)
+	if err != nil || after.Depth != before.Depth {
+		t.Fatalf("missing-key rebind changed depth from %d to %d: %v", before.Depth, after.Depth, err)
+	}
+}
+
+func TestRebindRefusesUnrecognizedFoldAndUnconfirmedWarning(t *testing.T) {
+	requireWritableKeyCustody(t)
+	ctx := context.Background()
+	t.Run("unrecognized fold", func(t *testing.T) {
+		repo, _, workspace := initializeRebindTestRepository(t, ctx, "chess-fold@future", true)
+		before, err := workspace.Records(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = run(ctx, []string{"rebind", "--repo", repo}, io.Discard, strings.NewReader("rebind\n"))
+		if err == nil || !strings.Contains(err.Error(), "cannot interpret") {
+			t.Fatalf("unrecognized-fold error = %v", err)
+		}
+		after, readErr := workspace.Records(ctx)
+		if readErr != nil || after.Depth != before.Depth {
+			t.Fatalf("unrecognized-fold rebind changed depth from %d to %d: %v", before.Depth, after.Depth, readErr)
+		}
+	})
+	t.Run("confirmation", func(t *testing.T) {
+		repo, _, workspace := initializeRebindTestRepository(t, ctx, "chess-fold@0", true)
+		before, err := workspace.Records(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var output bytes.Buffer
+		err = run(ctx, []string{"rebind", "--repo", repo}, &output, strings.NewReader("yes\n"))
+		if err == nil || !strings.Contains(err.Error(), "not confirmed") || !strings.Contains(output.String(), "may be interpreted differently") {
+			t.Fatalf("unconfirmed rebind output %q error %v", output.String(), err)
+		}
+		after, readErr := workspace.Records(ctx)
+		if readErr != nil || after.Depth != before.Depth {
+			t.Fatalf("unconfirmed rebind changed depth from %d to %d: %v", before.Depth, after.Depth, readErr)
+		}
+	})
+}
+
+func initializeRebindTestRepository(t *testing.T, ctx context.Context, fold string, keepManagedKey bool) (string, ed25519.PrivateKey, *host.Workspace) {
+	t.Helper()
+	repo := filepath.Join(t.TempDir(), "repo")
+	if output, err := exec.CommandContext(ctx, "git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	_, initializer, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keepManagedKey {
+		common, err := gitCommonDir(ctx, repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeRebindTestKey(t, filepath.Join(common, "chess", "player.key"), initializer)
+	}
+	legacy := application.Application
+	legacy.FoldVersion = fold
+	workspace, err := host.Init(ctx, repo, legacy, initializer, host.Options{PayloadCeiling: 16 << 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repo, initializer, workspace
+}
+
+func writeRebindTestKey(t *testing.T, path string, keys ...ed25519.PrivateKey) ed25519.PrivateKey {
+	t.Helper()
+	var private ed25519.PrivateKey
+	if len(keys) == 0 {
+		_, private, _ = ed25519.GenerateKey(nil)
+	} else {
+		private = keys[0]
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(hex.EncodeToString(private)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return private
+}
+
+func gitObjectSnapshot(t *testing.T, repo string) map[string][]byte {
+	t.Helper()
+	listed, err := exec.Command("git", "-C", repo, "rev-list", "--objects", "--all").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := make(map[string][]byte)
+	for _, line := range strings.Split(strings.TrimSpace(string(listed)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		oid := fields[0]
+		kind, err := exec.Command("git", "-C", repo, "cat-file", "-t", oid).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		contents, err := exec.Command("git", "-C", repo, "cat-file", strings.TrimSpace(string(kind)), oid).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot[oid] = append(append([]byte{}, kind...), contents...)
+	}
+	return snapshot
+}
+
+func assertGitObjectsUnchanged(t *testing.T, repo string, before map[string][]byte) {
+	t.Helper()
+	after := gitObjectSnapshot(t, repo)
+	for oid, want := range before {
+		got, ok := after[oid]
+		if !ok || !bytes.Equal(got, want) {
+			t.Errorf("prior Git object %s changed or disappeared", oid)
+		}
 	}
 }
 
