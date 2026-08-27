@@ -1,1 +1,1 @@
-{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:e03da5d5590d8c6a48952d0a4b2c2b40a5bf264f","text":"Retire the prior display-name cmd/chess artifact; the successor is the exact repaired broad-path artifact in this filing."}
+{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:b99495ef86eb2d83016a67446ebfef57d14be88d","text":"Retire the older stale cmd/chess artifact; the successor is the exact repaired broad-path artifact in this filing."}
