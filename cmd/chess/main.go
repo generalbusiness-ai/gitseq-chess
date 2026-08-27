@@ -268,6 +268,9 @@ func runServe(ctx context.Context, args []string, stdout io.Writer) error {
 	if !validLoopbackListen(*listen) {
 		return errors.New("serve listen address must use localhost or a loopback IP")
 	}
+	if _, _, err := application.OpenProjection(ctx, common.repo); err != nil {
+		return fmt.Errorf("open chess repository %q: %w", common.repo, err)
+	}
 	server := newChessHTTPServer(*listen, newReadHandler(ctx, common.repo))
 	fmt.Fprintln(stdout, "http://"+*listen)
 	return server.ListenAndServe()

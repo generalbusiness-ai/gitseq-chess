@@ -7,11 +7,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -1148,6 +1151,61 @@ func TestLiveTransportAndWaitBoundariesFailClosed(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestServeCommandRejectsMissingRepositoryBeforeListening(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := filepath.Join(t.TempDir(), "missing")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestServeCommandHelper$", "--", "serve", "--repo", repo, "--listen", address)
+	command.Env = append(os.Environ(), "CHESS_SERVE_COMMAND_HELPER=1")
+	var stdout, stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	err = command.Run()
+	if ctx.Err() != nil {
+		t.Fatalf("serve did not reject missing repository before timeout: stdout %q, stderr %q", stdout.String(), stderr.String())
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() == 0 {
+		t.Fatalf("serve exit = %v, want non-zero", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("serve stdout = %q, want no listen URL", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), repo) || !strings.Contains(stderr.String(), "resolve git dirs") {
+		t.Fatalf("serve error does not name repository and reason: %q", stderr.String())
+	}
+
+	listener, err = net.Listen("tcp", address)
+	if err != nil {
+		t.Fatalf("serve left %s bound: %v", address, err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServeCommandHelper(t *testing.T) {
+	if os.Getenv("CHESS_SERVE_COMMAND_HELPER") != "1" {
+		return
+	}
+	for index, argument := range os.Args {
+		if argument == "--" {
+			os.Args = append([]string{"chess"}, os.Args[index+1:]...)
+			main()
+		}
+	}
+	t.Fatal("serve helper arguments are missing --")
 }
 
 func TestLiveWaitBudgetReleasesOnCompletionAndCancellation(t *testing.T) {
