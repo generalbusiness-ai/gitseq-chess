@@ -1,1 +1,1 @@
-{"kind":"artifact","text":"Merge published the current artifact at chess.go","body":{"commit":"94f5c734fe604fcb68d0791fd83754f4e31627d1","path":"chess.go"}}
+{"kind":"artifact","text":"Merge published the current artifact at chess_test.go","body":{"commit":"94f5c734fe604fcb68d0791fd83754f4e31627d1","path":"chess_test.go"}}
