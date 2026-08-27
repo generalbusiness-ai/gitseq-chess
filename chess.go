@@ -142,8 +142,9 @@ type Game struct {
 
 // seat is the authority captured when a player sits down. An unanchored seat
 // belongs to its exact session key. Once that key acts under a chess-scoped
-// anchor, the seat is upgraded to the persistent identity and any currently
-// anchored key for that identity may act for it.
+// anchor meeting the seat strength threshold, the seat is upgraded to the
+// persistent identity and any currently qualified key for that identity may
+// act for it.
 type seat struct {
 	actor    string
 	identity identity.Identity
@@ -594,7 +595,7 @@ func (p *Projection) seatSide(game *Game, actor string, resolved identity.Resolv
 
 func (p *Projection) seatAt(record host.Record, game string) seat {
 	owner := seat{actor: record.Actor}
-	if resolved := p.identities.LookupAt(record.ID); resolved.Anchored && chessScope(resolved.Scope, game) {
+	if resolved := p.identities.LookupAt(record.ID); seatAnchorQualifies(resolved, game) {
 		owner.identity, owner.anchored = resolved.Identity, true
 	}
 	return owner
@@ -612,14 +613,14 @@ func matchSeat(owner, other seat, actor string, resolved identity.Resolved, game
 	}
 	if owner.anchored {
 		return seatMatch{
-			matched: resolved.Anchored && chessScope(resolved.Scope, game) && sameIdentity(resolved.Identity, owner.identity),
+			matched: seatAnchorQualifies(resolved, game) && sameIdentity(resolved.Identity, owner.identity),
 		}
 	}
 	if actor != owner.actor {
 		return seatMatch{}
 	}
 	matched := seatMatch{matched: true}
-	if resolved.Anchored && chessScope(resolved.Scope, game) {
+	if seatAnchorQualifies(resolved, game) {
 		matched.collision = other.anchored && sameIdentity(resolved.Identity, other.identity)
 		identity := resolved.Identity
 		matched.upgrade = &identity
@@ -656,6 +657,27 @@ func SideToMove(game Game) string {
 
 func chessScope(scope, game string) bool {
 	return scope == "chess" || scope == "chess:"+game
+}
+
+// seatAnchorQualifies is the chess seat-strength policy. Every anchor rung the
+// host defines today qualifies, including the weakest witnessed/live-lookup
+// pair, but an unanchored resolution, the wrong scope, or any unreviewed
+// strength value confers no seat authority.
+func seatAnchorQualifies(resolved identity.Resolved, game string) bool {
+	if !resolved.Anchored || !chessScope(resolved.Scope, game) {
+		return false
+	}
+	switch resolved.Vouching {
+	case identity.Witnessed, identity.SelfSigned:
+	default:
+		return false
+	}
+	switch resolved.Verification {
+	case identity.LiveLookup, identity.InLog:
+	default:
+		return false
+	}
+	return true
 }
 
 func sameIdentity(left, right identity.Identity) bool {

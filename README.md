@@ -220,8 +220,12 @@ the chosen key; tool results contain only public record data and fold decisions.
   rests on the exact pending offer and only the other seated player may accept.
 - `gitseq/identity-anchor@0` is shared host vocabulary; chess does not create
   its own identity system. A seat belongs to a chess-scoped anchored identity
-  when one is in force at the exact create, join, or later act position;
-  otherwise it belongs to the exact session key. A seated key may therefore
+  when one is in force at the exact create, join, or later act position. The
+  deliberate seat threshold accepts every anchor strength the host currently
+  resolves: witnessed or self-signed vouching, with live-lookup or in-log
+  verification. Unknown or newly introduced strength values confer no seat
+  authority until this policy is reviewed. An unanchored or wrongly scoped
+  key belongs only to its exact session key. A seated key may therefore
   play first and upgrade later, and another currently anchored key for that
   identity can recover the seat. Only an effective chess act commits that
   late upgrade, and one persistent identity cannot occupy both colors in a
