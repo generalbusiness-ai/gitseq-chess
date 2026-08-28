@@ -1,16 +1,19 @@
 ---
 date: 2026-08-27
-status: draft design — no browser durable-write path is implemented
-basis: gitseq-chess main at 0ccbeb76f0819976abd155071c6cf81d1b5146c3
+status: identity front door implemented; durable chess writes remain a design
+basis: Gitseq public host identity prepare/submit API at 7152e79a741e6c9c277568a6aabec8e9b6cbd792
 ---
 
 # Browser playability without server-held player keys
 
-## Decision
+## Decision and current scope
 
-The browser's Ed25519 key is the chess actor. It may take a seat and sign its
-own durable joins and moves. The serve process relays those signed acts to the
-log, but never receives, stores, or uses a player private key.
+The browser's non-exportable Ed25519 key is the browser actor. The serve
+process may relay acts signed by that key to the log, but it never receives,
+stores, or uses the private half. The first durable browser surface is identity:
+GitHub and Nostr can anchor the tab key, and an anchored tab key can endorse an
+agent key within a bounded chess scope and expiry. Durable browser joins and
+moves remain outside the current implementation.
 
 Do not delegate browser play to a server-held player key. Delegation would make
 the process able to forge every move made through it, turn cross-site request
@@ -19,45 +22,32 @@ and create another custody system beside the command-line one. None of that is
 needed: the browser already proves possession of an Ed25519 key and signs live
 chat locally.
 
-This decision makes the live and durable identities one key. A lease still
-grants only process-local presence. The same key's durable signature, not the
-lease and not the HTTP connection, says who attempted a chess act.
+This decision makes live presence and identity endorsement use one tab key. A
+lease still grants only process-local presence. A durable identity act is
+authorized by the key's exact signature, not by the lease or HTTP connection.
 
 ## Current boundary
 
-The current page generates a non-extractable key into a module variable when a
-person joins the live room. Reload loses it. `newReadHandler` opens projections
-only; the HTTP service has no `host.Workspace` durable writer. The command line
-is the only surface that calls `Workspace.Append` through chess helpers such as
-`Join` and `Move`.
-
-There is also a public-host API gap. `Workspace.Append` accepts a private key
-and constructs the kernel intent internally. The canonical intent and kernel
-submission types are private to the Gitseq module, so this outside application
-cannot correctly relay a signature created elsewhere. Implementation therefore
-starts with a small Gitseq public-host addition that prepares canonical signing
-bytes and submits the matching public key and signature. It must not expose
-kernel internals or application meaning.
+The page generates a non-exportable key into a module variable. Reload or tab
+closure loses it. The landed public-host API now lets an outside application
+call `Workspace.Prepare`, obtain `ActorSigningBytes`, and submit a matching
+`SignedAct` through `Workspace.AppendSigned`. Gitseq still owns canonical intent
+encoding and verification; chess does not expose kernel internals or reproduce
+that encoding in JavaScript.
 
 ## 1. Identity, persistence, and loss
 
-Generate one Ed25519 key pair per chess repository and browser origin with
-WebCrypto using `extractable: false`. Store both `CryptoKey` objects in one
-IndexedDB record keyed by the repository genesis and a local format version.
-IndexedDB's structured-clone storage preserves a non-extractable private
-`CryptoKey`: reload can use it for `sign`, but JavaScript cannot export its key
-bytes. Store the raw public key beside it for display and requests. Complete
-that transaction before offering a durable join.
+Generate one Ed25519 key pair per tab with WebCrypto using
+`extractable: false`. Keep both `CryptoKey` objects in memory. The raw public
+key is sent to the service and its fingerprint is displayed. The UI keeps no
+key or prior fingerprint in browser storage. It stores no private key, token,
+live credential, bearer, or root-key material.
 
-The repository genesis, not a path or game identifier, partitions keys. The
-browser origin remains an additional custody boundary. Changing browser
-profiles, clearing site data, or serving the same repository from a different
-origin loses access to the key. The UI must say this before an unanchored key
-takes a seat and must never silently replace a missing key while presenting the
-new fingerprint as the old player.
-
-Non-extractable means there is no private-key backup or import/export feature.
-Recovery uses the host identity rules already folded by chess:
+Changing tabs, reloading, closing the page, changing browser profiles,
+clearing site data, or serving the repository from another origin loses the
+private key. A fresh session generates a visibly different fingerprint. The
+UI never presents that new key as the old player. Recovery uses only the host
+identity rules already folded by chess:
 
 - A seat anchored to a persistent identity at create or join can be used by a
   replacement browser or CLI key that is currently anchored to the same
@@ -73,65 +63,61 @@ Recovery uses the host identity rules already folded by chess:
   server recovery key.
 
 An existing anchored CLI or browser key can endorse a new browser fingerprint
-through the current host identity vocabulary. A persistent Nostr root can also
-anchor a new subject with its existing proof. Adding a convenient browser
-identity ceremony may be separate work; it does not require new seat or fold
-semantics.
+through the current host identity vocabulary. A persistent GitHub or Nostr
+identity can also anchor a new session key through the browser ceremony. This
+adds no seat or fold semantics.
 
-## 2. Browser-signed submission
+## 2. Browser-signed identity submission
 
-Use one two-step relay for a finite allowlist of browser acts. The first
-implementation needs only `join` and `move`; creation, naming, resignation,
-and draw actions can remain on the CLI until separately requested.
+Use a two-step relay for the finite identity-anchor schema. Joining, moving,
+creation, naming, resignation, and draw actions remain on the CLI or MCP until
+separately implemented.
 
-1. The browser opens or renews its existing possession-proved live session
-   with the persisted public key. The lease is useful for request scoping and
+1. The browser may open or renew its existing possession-proved live session
+   with the current tab public key. The lease is useful for live-room scoping and
    rate bounds, but is not durable authority.
-2. The browser sends a bounded JSON prepare request containing the game, the
-   requested join or UCI move, its public key, its credential, and a fresh
-   idempotency key retained until the outcome is known.
-3. The server checks that the credential is bound to the same game and public
-   key. It reads one verified projection, rejects an obviously inapplicable
-   request, and uses a pure chess act builder shared with the CLI to produce
-   the canonical payload and causal reference. It asks the public host API for
-   the exact signing bytes. The response echoes the human-readable action and
-   the opaque prepared act so the page can confirm it still matches the click
-   before calling WebCrypto.
-4. The browser signs those bytes with its persisted private `CryptoKey` and
+2. For Nostr, the browser asks the server for the exact NIP-01 event template
+   whose content is `identity.NostrDelegation`. It passes that event object
+   directly to `window.nostr.signEvent` without serializing or reconstructing
+   it. GitHub instead uses one-shot same-origin OAuth state and PKCE; the
+   provider token exists only during the server-side lookup and witnessing act.
+3. For a self-signed Nostr anchor or an agent-key endorsement, the browser asks
+   the server to prepare the bounded host identity act. The response contains
+   an opaque draft and the exact host signing bytes.
+4. The browser signs those bytes with its in-memory private `CryptoKey` and
    returns the prepared act, public key, and signature. The private key never
    crosses the WebCrypto boundary.
-5. The server rechecks all bounds, the credential-to-key binding, the allowed
-   schema, and the prepared act's application fields. The public host API
-   recomputes the local target, payload-tree identity, namespace, and exact
-   intent; verifies that the submitted signature covers that intent; and gives
-   it to the repository's sequencer. The server then folds the returned record
-   and reports its record identifier and effective/refused decision exactly as
-   the CLI does.
+5. The server rechecks all bounds, the allowed schema, the subject, exact
+   `chess` or `chess:<game>` scope, expiry, and cached prepared draft. The
+   public host API verifies the submitted signature and gives the act to the
+   repository sequencer. The server then folds the returned record and reports
+   whether the anchor is actually in force; append success alone does not
+   imply identity authority.
 
 The serve process holds and uses the repository's sequencer key because it
 orders admitted records. It never holds or uses a player private key. A
 sequencer signature cannot stand in for the browser actor signature.
 
-The same race semantics as the CLI remain visible. Another append may advance
-the accepted move chain after preparation. The signed act still names the
-chain the person saw; if it becomes stale, the fold may retain it as an
-ineffective attempt. The idempotency key makes retrying the same prepared act
-one act, not a second attempt.
+Prepared identity drafts are bounded, process-local, one-shot, and expire. The
+server accepts only the opaque draft identifier it issued and recomputes the
+actor from the submitted public key. A durable endorsement can still be
+recorded but ineffective; the folded identity outcome, not HTTP success or
+append success, determines what the UI may call anchored.
 
 ### Hostile-page defence
 
-A page on another origin cannot read or invoke the origin-scoped IndexedDB
-`CryptoKey`. Durable prepare and submit routes stay behind the existing trusted
+A page on another origin cannot read or invoke the tab's in-memory `CryptoKey`.
+Durable prepare and submit routes stay behind the existing trusted
 host, JSON content-type, `Origin`, and `Sec-Fetch-Site` checks, with no CORS
 grant. Every submit also needs a valid signature from the public key bound to
-the session. A cross-origin page can therefore send, at most, a request that is
+the prepared draft. A cross-origin page can therefore send, at most, a request that is
 refused; it cannot ask the server to sign because the server has no player key.
 
 The browser is nevertheless untrusted server input, even when same-origin.
-The server does not trust its role, legal-move claim, payload, causal reference,
-public-key fingerprint, idempotency fields, or signature. It derives or
-validates each one and leaves final authority to signature verification and
-the fold. Requests and responses remain bounded.
+The server does not trust its identity claim, subject, scope, expiry, Nostr
+event, public-key fingerprint, draft, or signature. It derives or validates
+each one and leaves final authority to signature verification and the fold.
+Requests and responses remain bounded.
 
 Non-extractability is custody, not protection from same-origin script. Script
 running in this origin can ask the private `CryptoKey` to sign. The existing
@@ -141,7 +127,10 @@ part of the player-key boundary. An actual same-origin script compromise has
 the authority of that browser actor until the key or its identity anchor is
 revoked; pretending otherwise would overstate the design.
 
-## 3. Exact move intent bytes and ownership
+## 3. Future durable move intent bytes and ownership
+
+The following remains the design for a later browser move surface; the current
+identity front door neither prepares nor submits `chess/move@0`.
 
 For a move, the chess application owns these application bytes and fields:
 
@@ -199,11 +188,11 @@ base64, domain-prefix, WebCrypto, and future protocol changes. If a browser
 encoder is ever introduced, the same gate must compare its byte-for-byte output
 with the Go host encoder before it can replace this design.
 
-## 4. Seat binding and CLI interoperability
+## 4. Future browser seat binding and CLI interoperability
 
-Joining in the UI is a normal `chess/join@0` act signed by the persisted browser
-key and resting on the create record. `SeatFor` then recognizes the browser
-fingerprint as the seat holder. The UI may use the URL-fragment invitation
+If browser joining is implemented, it will be a normal `chess/join@0` act
+signed by the tab key and resting on the create record. `SeatFor` would then
+recognize the browser fingerprint as the seat holder. Such a UI may use the URL-fragment invitation
 secret already kept out of referrers and include it only in the signed join
 payload. For an exact-key invitation, the creator must invite the browser
 fingerprint shown by the UI; a different CLI key cannot substitute for it.
@@ -233,34 +222,32 @@ preview, or a lease credential into durable authority.
 
 It also does not add key export, cloud key escrow, a server-held player or
 recovery key, a second chess rules engine in JavaScript, or a browser copy of
-the kernel intent encoder. Browser game creation and the remaining durable
-actions are follow-up surface work, not reasons to make the first join-and-move
-path generic beyond its finite schemas.
+the kernel intent encoder. Browser game creation and durable chess actions are
+follow-up surface work, not reasons to make the identity path generic beyond
+its finite host schema.
 
 ## Conclusions
 
-**Architecture.** This note changes no contract. Implementation affects the
-Gitseq application-host public surface, the chess resident composition, and the
-browser UI. The kernel protocol and chess application fold remain unchanged.
-Because externally prepared and submitted signatures extend the exported
-`host` contract, that Gitseq change needs its own exact-head architecture
-update and review before the chess repository consumes it. Chess should factor
-pure join/move act builders so CLI and HTTP share application encoding.
+**Architecture.** This chess implementation consumes the already landed Gitseq
+application-host public surface and changes the chess resident composition and
+browser UI. It does not change the Gitseq host contract, kernel protocol, or
+chess application fold. A future browser move path should factor pure
+join/move act builders so CLI and HTTP share application encoding.
 
-**Security.** The trust boundary moves from a memory-only browser actor to an
-origin-persisted browser actor, not into the server. The server remains an
-untrusted-input verifier and sequencer; it cannot forge a player act. The main
-risks are same-origin script use of the non-extractable key, loss of unanchored
-key custody, cross-origin or DNS-rebinding requests, malformed or oversized
-signed submissions, replay, and stale move races. The design addresses them
-with self-contained same-origin code and CSP, explicit loss semantics, the
-unchanged loopback/trusted-host mutation guard, bounded canonical verification,
-signed idempotency, and fold-visible race outcomes. A same-origin script
-compromise remains player-key compromise and must be described as such.
+**Security.** The trust boundary remains a memory-only browser actor; it does
+not move into the server. The server remains an untrusted-input verifier and
+sequencer and cannot forge a browser act. The main risks are same-origin script
+use of the non-exportable key, loss of unanchored key custody, cross-origin or
+DNS-rebinding requests, malformed or oversized signed submissions, replay,
+provider-secret disclosure, and stale-act races. The implementation addresses
+them with self-contained same-origin code and CSP, explicit loss semantics, the
+loopback/trusted-host mutation guard, one-shot OAuth state and PKCE, fixed
+provider endpoints, transient tokens, bounded canonical verification, and
+fold-visible outcomes. A same-origin script compromise remains browser-key
+compromise and must be described as such.
 
-**Simplification.** Use one browser key for live proof and durable chess acts,
-one canonical Go application encoder, one canonical host intent encoder, and
-one prepare/sign/submit relay. Reuse the current fold, identity recovery,
-`SeatFor`, idempotency, and decision reporting. Do not add delegation to a
-server key, private-key export, another recovery ontology, or duplicated
-browser encoding.
+**Simplification.** Use one browser key for live proof and durable identity
+acts, one canonical host intent encoder, and one prepare/sign/submit relay.
+Reuse the current fold, identity recovery, `SeatFor`, and decision reporting.
+Do not add delegation to a server key, private-key export, another recovery
+ontology, or duplicated browser encoding.

@@ -61,6 +61,30 @@ h1 { max-width: 16ch; margin: .4rem 0 1rem; font-family: ui-serif, Georgia, seri
 .game-refusals p, .game-refusals ol { margin: .4rem 0; font-size: .82rem; line-height: 1.4; }
 .game-refusals code { display: block; overflow: hidden; margin-top: .15rem; font-size: .65rem; text-overflow: ellipsis; white-space: nowrap; }
 .play-area { display: grid; grid-template-columns: minmax(20rem, 42rem) minmax(18rem, 1fr); gap: clamp(1.5rem, 4vw, 3rem); align-items: start; }
+.right-rail { display: grid; min-width: 0; gap: 1rem; }
+.identity-panel { min-width: 0; padding: 1.25rem; border: 1px solid #cfc8b8; border-radius: .75rem; background: #fffdf7; }
+.lobby-identity { max-width: 52rem; margin-bottom: 2.5rem; }
+.identity-heading { display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
+.identity-heading .eyebrow { margin: 0 0 .25rem; }
+.identity-heading h2 { margin: 0; font-family: ui-serif, Georgia, serif; font-size: 1.35rem; }
+.identity-panel > p { color: #5e5b54; font-size: .85rem; line-height: 1.45; }
+.identity-panel button { border: 0; border-radius: 2rem; padding: .65rem 1rem; background: #202b25; color: #fff; font-weight: 700; cursor: pointer; }
+.identity-panel button:disabled { cursor: default; opacity: .55; }
+.identity-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem; margin: 1rem 0; }
+.identity-facts div { min-width: 0; padding-top: .55rem; border-top: 1px solid #ddd6c7; }
+.identity-facts dt { color: #6a675e; font-size: .68rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.identity-facts dd { overflow-wrap: anywhere; margin: .25rem 0 0; font-size: .8rem; }
+.identity-facts code { font-size: .68rem; }
+.identity-recovery { padding: .75rem; border-left: .25rem solid #a56c27; background: #f7ead5; }
+.identity-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; margin: 1rem 0; }
+.identity-controls label, .agent-endorsement-form label { color: #5e5b54; font-size: .75rem; font-weight: 700; }
+.identity-controls select, .identity-controls input, .agent-endorsement-form input { width: 100%; margin-top: .25rem; border: 1px solid #afa998; border-radius: .4rem; padding: .55rem; background: #fffdf7; color: inherit; }
+.identity-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.agent-endorsement-form { margin-top: 1rem; }
+.agent-endorsement-form div { display: flex; gap: .5rem; margin-top: .25rem; }
+.agent-endorsement-form input { min-width: 0; flex: 1; margin: 0; }
+.identity-message { min-height: 2.5rem; margin-bottom: 0; }
+.identity-message.refused { color: #7f322d; }
 .live-panel { min-width: 18rem; min-height: 24rem; max-width: 100%; max-height: 48rem; overflow: auto; resize: both; padding: 1.25rem; border: 1px solid #cfc8b8; border-radius: .75rem; background: #fffdf7; }
 .live-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .live-heading h2, .live-panel h3 { font-family: ui-serif, Georgia, serif; }
@@ -102,6 +126,7 @@ details code { display: block; overflow-wrap: anywhere; margin-top: .75rem; font
   .play-area { grid-template-columns: 1fr; }
   .live-panel { width: 100%; min-width: 0; resize: vertical; }
   .seats { grid-template-columns: 1fr; }
+  .identity-facts, .identity-controls { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: no-preference) {
