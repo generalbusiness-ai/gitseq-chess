@@ -231,6 +231,16 @@ witness, verifies the signature, and gives the unchanged prepared act to
 signature failure, or append failure produces the same generic error and no
 effective identity anchor.
 
+Access to this blind signer socket grants witness signing authority. Put the
+socket in an owner-controlled private directory and give the socket owner-only
+permissions, or enforce an equivalent peer-authenticated local boundary that
+admits only the intended chess serve identity. Never expose or bridge the
+signer over TCP or another network transport, and never put its socket in a
+shared directory or make it available to a shared group. Moving the private
+key out of chess serve separates key custody; it is not a policy boundary
+against a compromised authorized serve. The signer necessarily trusts that
+authorized process to supply the exact prepared signing bytes.
+
 The same server exposes bounded, read-only JSON endpoints:
 
 - `GET /v1/games?limit=100&after=<game>`
