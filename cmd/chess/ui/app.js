@@ -58,6 +58,22 @@ async function signNostrEvent(nostr, event) {
   return nostr.signEvent(event);
 }
 
+async function startGitHubOAuth(postJSON, subtle, privateKey, actorKey, scope, notAfter, decodeBase64, encodeBase64) {
+  const prepared = await postJSON("/v1/identity/github/challenge", {
+    actor_key: actorKey,
+    scope,
+    not_after: notAfter,
+  });
+  const signature = await subtle.sign("Ed25519", privateKey, decodeBase64(prepared.signing_bytes));
+  return postJSON("/v1/identity/github/start", {
+    actor_key: actorKey,
+    scope,
+    not_after: notAfter,
+    challenge: prepared.challenge,
+    actor_signature: encodeBase64(signature),
+  });
+}
+
 function sessionKeyNotice(previousActor, currentActor, anchored) {
   if (!previousActor || previousActor === currentActor) return "";
   return anchored
@@ -72,6 +88,7 @@ if (typeof module !== "undefined") module.exports = {
   identityPresentation,
   acceptsOAuthPopupMessage,
   signNostrEvent,
+  startGitHubOAuth,
   sessionKeyNotice,
 };
 
@@ -404,11 +421,10 @@ if (typeof module !== "undefined") module.exports = {
         const popup = window.open("", "gitseq-chess-github", "popup,width=720,height=760");
         if (!popup) throw new Error("Allow the GitHub sign-in popup and try again.");
         githubPopup = popup;
-        const started = await post("/v1/identity/github/start", {
-          actor_key: actorKey,
-          scope: scopeFromControls(),
-          not_after: expiryFromControls(),
-        });
+        const started = await startGitHubOAuth(
+          post, window.crypto.subtle, keyPair.privateKey, actorKey,
+          scopeFromControls(), expiryFromControls(), base64ToBytes, bytesToBase64,
+        );
         popup.location.replace(started.authorize_url);
         setIdentityMessage("Complete GitHub sign-in in the popup. The provider token is never returned to this page.");
       } catch (error) {

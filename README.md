@@ -190,8 +190,10 @@ recoverable: if an exact-key seat is lost before an effective chess act binds
 it to an anchor, a different key cannot recover that seat. A new tab key may be
 anchored to the same persistent identity and chess scope through either:
 
-- same-origin GitHub OAuth with state and PKCE, followed by a deployment-witnessed
-  host anchor; or
+- same-origin GitHub OAuth that begins only after the tab signs a bounded,
+  one-shot server challenge for its public key, requested scope, expiry, and
+  OAuth attempt, then uses state and PKCE and a deployment-witnessed host
+  anchor; or
 - a NIP-07 signer, which receives the exact server-produced event object and
   returns a Nostr root signature carried in the durable anchor.
 
@@ -203,7 +205,9 @@ PKCE verifiers stay transient in the server. Provider tokens, root private
 keys, tab private keys, live credentials, and bearer values are never placed
 in browser storage, URLs, server storage, logs, or error text. The OAuth
 authorization URL contains only protocol values such as the one-shot state and
-PKCE challenge, not any of those secrets.
+PKCE challenge, not any of those secrets. The possession signature and its
+short-lived challenge travel only in POST bodies, are consumed on the first
+matching start attempt, and never become OAuth state or a reusable session.
 
 GitHub anchoring is disabled unless the repository already declares a
 `github` witness and chess serve can reach the deployment's signer through the

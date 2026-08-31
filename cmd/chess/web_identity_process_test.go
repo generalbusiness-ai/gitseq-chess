@@ -18,6 +18,7 @@ import (
 
 	application "github.com/generalbusiness-ai/gitseq-chess"
 	"github.com/generalbusiness-ai/gitseq/host/identity"
+	"github.com/generalbusiness-ai/gitseq/host/live"
 )
 
 func TestServeGitHubOAuthUsesOnlyTheExternalWitnessSigner(t *testing.T) {
@@ -83,12 +84,21 @@ func TestServeGitHubOAuthUsesOnlyTheExternalWitnessSigner(t *testing.T) {
 	}
 
 	client := &http.Client{Timeout: 2 * time.Second}
-	actorPublic, _ := generateIdentityKey(t)
+	actorPublic, actorPrivate := generateIdentityKey(t)
+	notAfter := time.Now().Add(time.Hour).Unix()
+	prepared := struct {
+		Challenge    live.SessionChallenge `json:"challenge"`
+		SigningBytes []byte                `json:"signing_bytes"`
+	}{}
+	postProcessJSON(t, client, "http://"+address+"/v1/identity/github/challenge", identityAnchorRequest{
+		ActorKey: actorPublic, Scope: "chess", NotAfter: notAfter,
+	}, &prepared)
 	started := struct {
 		AuthorizeURL string `json:"authorize_url"`
 	}{}
-	postProcessJSON(t, client, "http://"+address+"/v1/identity/github/start", identityAnchorRequest{
-		ActorKey: actorPublic, Scope: "chess", NotAfter: time.Now().Add(time.Hour).Unix(),
+	postProcessJSON(t, client, "http://"+address+"/v1/identity/github/start", githubPossessionRequest{
+		ActorKey: actorPublic, Scope: "chess", NotAfter: notAfter, Challenge: prepared.Challenge,
+		ActorSignature: ed25519.Sign(actorPrivate, prepared.SigningBytes),
 	}, &started)
 	authorize, err := url.Parse(started.AuthorizeURL)
 	if err != nil || authorize.Query().Get("state") == "" {

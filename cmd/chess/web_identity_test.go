@@ -22,7 +22,34 @@ import (
 	application "github.com/generalbusiness-ai/gitseq-chess"
 	"github.com/generalbusiness-ai/gitseq/host"
 	"github.com/generalbusiness-ai/gitseq/host/identity"
+	"github.com/generalbusiness-ai/gitseq/host/live"
 )
+
+type githubChallengeResponse struct {
+	Challenge    live.SessionChallenge `json:"challenge"`
+	SigningBytes []byte                `json:"signing_bytes"`
+}
+
+type githubStartResponse struct {
+	AuthorizeURL string `json:"authorize_url"`
+}
+
+func startGitHubOAuthForTest(t *testing.T, handler http.Handler, private ed25519.PrivateKey, public ed25519.PublicKey, scope string, notAfter int64) githubStartResponse {
+	t.Helper()
+	var prepared githubChallengeResponse
+	postJSON(t, handler, "/v1/identity/github/challenge", identityAnchorRequest{
+		ActorKey: public, Scope: scope, NotAfter: notAfter,
+	}, &prepared, http.StatusOK)
+	if len(prepared.SigningBytes) == 0 || !bytes.Equal(prepared.Challenge.ActorKey, public) {
+		t.Fatalf("GitHub possession challenge = %#v", prepared)
+	}
+	var started githubStartResponse
+	postJSON(t, handler, "/v1/identity/github/start", githubPossessionRequest{
+		ActorKey: public, Scope: scope, NotAfter: notAfter, Challenge: prepared.Challenge,
+		ActorSignature: ed25519.Sign(private, prepared.SigningBytes),
+	}, &started, http.StatusOK)
+	return started
+}
 
 func TestIdentityRoutesUseTheBrowserMutationBoundary(t *testing.T) {
 	handler := newReadHandler(context.Background(), filepath.Join(t.TempDir(), "missing"))
@@ -330,13 +357,8 @@ func TestGitHubOAuthBindsStatePKCEOriginAndRedactsTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := newReadHandlerWithIdentity(ctx, repo, runtime, config)
-	actorPublic, _ := generateIdentityKey(t)
-	var started struct {
-		AuthorizeURL string `json:"authorize_url"`
-	}
-	postJSON(t, handler, "/v1/identity/github/start", identityAnchorRequest{
-		ActorKey: actorPublic, Scope: "chess", NotAfter: now.Add(time.Hour).Unix(),
-	}, &started, http.StatusOK)
+	actorPublic, actorPrivate := generateIdentityKey(t)
+	started := startGitHubOAuthForTest(t, handler, actorPrivate, actorPublic, "chess", now.Add(time.Hour).Unix())
 	authorize, err := url.Parse(started.AuthorizeURL)
 	if err != nil {
 		t.Fatal(err)
@@ -386,6 +408,113 @@ func TestGitHubOAuthBindsStatePKCEOriginAndRedactsTokens(t *testing.T) {
 	postJSON(t, handler, "/v1/identity/status", identityActorRequest{ActorKey: actorPublic}, &status, http.StatusOK)
 	if status["anchored"] != true || status["display"] != "alice [github:4242] (witnessed; in-log)" {
 		t.Fatalf("GitHub identity status = %#v", status)
+	}
+}
+
+func TestGitHubOAuthRequiresOneShotBrowserPossessionBeforeState(t *testing.T) {
+	ctx := context.Background()
+	repo, initializer, workspace := newIdentityTestRepository(t, ctx)
+	_, witness := generateIdentityKey(t)
+	if _, err := identity.DeclareWitness(ctx, workspace, initializer, witness.Public().(ed25519.PublicKey), []string{identity.GitHubScheme}); err != nil {
+		t.Fatal(err)
+	}
+	provider := newGitHubTestProvider(t)
+	now := time.Now().Truncate(time.Second)
+	service := newIdentityHTTP(repo, identityHTTPConfig{
+		GitHubAuthorizeURL: provider.URL + "/authorize", GitHubTokenURL: provider.URL + "/token",
+		GitHubUserURL: provider.URL + "/user", GitHubRedirectURL: "http://127.0.0.1:8080/v1/identity/github/callback",
+		GitHubClientID: "client-id", GitHubClientSecret: "client-secret",
+		WitnessSocket: startIdentitySigner(t, witness, nil), Now: func() time.Time { return now }, Client: provider.Client(),
+	})
+	handler := http.NewServeMux()
+	service.register(handler)
+	actorPublic, actorPrivate := generateIdentityKey(t)
+	wrongPublic, wrongPrivate := generateIdentityKey(t)
+
+	prepare := func() githubChallengeResponse {
+		t.Helper()
+		var response githubChallengeResponse
+		postIdentityJSON(t, handler, "/v1/identity/github/challenge", identityAnchorRequest{
+			ActorKey: actorPublic, Scope: "chess", NotAfter: now.Add(time.Hour).Unix(),
+		}, &response, http.StatusOK)
+		return response
+	}
+	valid := func(prepared githubChallengeResponse) githubPossessionRequest {
+		return githubPossessionRequest{
+			ActorKey: actorPublic, Scope: "chess", NotAfter: now.Add(time.Hour).Unix(), Challenge: prepared.Challenge,
+			ActorSignature: ed25519.Sign(actorPrivate, prepared.SigningBytes),
+		}
+	}
+	refuse := func(name string, mutate func(*githubPossessionRequest)) {
+		t.Helper()
+		t.Run(name, func(t *testing.T) {
+			prepared := prepare()
+			request := valid(prepared)
+			mutate(&request)
+			response := postIdentityJSON(t, handler, "/v1/identity/github/start", request, nil, http.StatusBadRequest)
+			if response.Body.String() != "GitHub possession proof is invalid\n" {
+				t.Fatalf("refusal exposed detail %q", response.Body.String())
+			}
+			if len(service.states) != 0 {
+				t.Fatalf("%s issued OAuth state before proof", name)
+			}
+		})
+	}
+
+	refuse("missing signature", func(request *githubPossessionRequest) { request.ActorSignature = nil })
+	refuse("wrong signature", func(request *githubPossessionRequest) {
+		request.ActorSignature = ed25519.Sign(wrongPrivate, []byte("not the server-produced bytes"))
+	})
+	refuse("substituted key", func(request *githubPossessionRequest) { request.ActorKey = wrongPublic })
+	refuse("substituted challenge", func(request *githubPossessionRequest) { request.Challenge.Nonce[0] ^= 1 })
+	refuse("substituted scope", func(request *githubPossessionRequest) { request.Scope = "chess:deadbeef" })
+	refuse("substituted expiry", func(request *githubPossessionRequest) { request.NotAfter++ })
+	failed := prepare()
+	failedRequest := valid(failed)
+	failedRequest.ActorSignature = ed25519.Sign(wrongPrivate, failed.SigningBytes)
+	postIdentityJSON(t, handler, "/v1/identity/github/start", failedRequest, nil, http.StatusBadRequest)
+	postIdentityJSON(t, handler, "/v1/identity/github/start", valid(failed), nil, http.StatusBadRequest)
+	if len(service.states) != 0 {
+		t.Fatal("failed possession proof left a reusable challenge")
+	}
+
+	expired := prepare()
+	expiredRequest := valid(expired)
+	now = now.Add(live.SessionChallengeTTL)
+	postIdentityJSON(t, handler, "/v1/identity/github/start", expiredRequest, nil, http.StatusBadRequest)
+	if len(service.states) != 0 {
+		t.Fatal("expired possession proof issued OAuth state")
+	}
+
+	prepared := prepare()
+	request := valid(prepared)
+	var started githubStartResponse
+	postIdentityJSON(t, handler, "/v1/identity/github/start", request, &started, http.StatusOK)
+	if started.AuthorizeURL == "" || len(service.states) != 1 {
+		t.Fatalf("proved OAuth start = %#v states=%d", started, len(service.states))
+	}
+	postIdentityJSON(t, handler, "/v1/identity/github/start", request, nil, http.StatusBadRequest)
+	if len(service.states) != 1 {
+		t.Fatal("replayed possession proof created another OAuth state")
+	}
+}
+
+func TestGitHubOAuthPossessionChallengesAreBoundedAndExpire(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	service := newIdentityHTTP("", identityHTTPConfig{Now: func() time.Time { return now }})
+	public, _ := generateIdentityKey(t)
+	notAfter := now.Add(time.Hour).Unix()
+	for index := 0; index < identityMaxPending; index++ {
+		if _, _, err := service.prepareGitHubPossession(public, "chess", notAfter); err != nil {
+			t.Fatalf("prepare challenge %d: %v", index, err)
+		}
+	}
+	if _, _, err := service.prepareGitHubPossession(public, "chess", notAfter); err == nil {
+		t.Fatal("pending GitHub possession challenge limit was not enforced")
+	}
+	now = now.Add(live.SessionChallengeTTL)
+	if _, _, err := service.prepareGitHubPossession(public, "chess", now.Add(time.Hour).Unix()); err != nil {
+		t.Fatalf("expired GitHub possession challenges retained capacity: %v", err)
 	}
 }
 
@@ -495,13 +624,8 @@ func TestGitHubOAuthSignerFailuresAreGenericAndCreateNoAnchor(t *testing.T) {
 				t.Fatal(err)
 			}
 			handler := newReadHandlerWithIdentity(ctx, repo, runtime, config)
-			actorPublic, _ := generateIdentityKey(t)
-			var started struct {
-				AuthorizeURL string `json:"authorize_url"`
-			}
-			postJSON(t, handler, "/v1/identity/github/start", identityAnchorRequest{
-				ActorKey: actorPublic, Scope: "chess", NotAfter: now.Add(time.Hour).Unix(),
-			}, &started, http.StatusOK)
+			actorPublic, actorPrivate := generateIdentityKey(t)
+			started := startGitHubOAuthForTest(t, handler, actorPrivate, actorPublic, "chess", now.Add(time.Hour).Unix())
 			authorize, err := url.Parse(started.AuthorizeURL)
 			if err != nil {
 				t.Fatal(err)

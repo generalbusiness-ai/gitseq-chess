@@ -79,8 +79,14 @@ separately implemented.
 2. For Nostr, the browser asks the server for the exact NIP-01 event template
    whose content is `identity.NostrDelegation`. It passes that event object
    directly to `window.nostr.signEvent` without serializing or reconstructing
-   it. GitHub instead uses one-shot same-origin OAuth state and PKCE; the
-   provider token exists only during the server-side lookup and witnessing act.
+   it. Before GitHub OAuth state or a provider URL exists, the server returns
+   host-canonical signing bytes for a bounded one-shot challenge tied to the
+   tab public key, scope, expiry, and OAuth attempt. The browser signs those
+   exact bytes and submits the challenge and signature in a POST body. The
+   server consumes the challenge on the first matching start attempt, verifies
+   possession, and only then creates same-origin OAuth state and PKCE. The
+   challenge is not a bearer session, and the provider token exists only during
+   the server-side lookup and witnessing act.
 3. For a self-signed Nostr anchor or an agent-key endorsement, the browser asks
    the server to prepare the bounded host identity act. The response contains
    an opaque draft and the exact host signing bytes.
@@ -241,10 +247,11 @@ use of the non-exportable key, loss of unanchored key custody, cross-origin or
 DNS-rebinding requests, malformed or oversized signed submissions, replay,
 provider-secret disclosure, and stale-act races. The implementation addresses
 them with self-contained same-origin code and CSP, explicit loss semantics, the
-loopback/trusted-host mutation guard, one-shot OAuth state and PKCE, fixed
-provider endpoints, transient tokens, bounded canonical verification, and
-fold-visible outcomes. A same-origin script compromise remains browser-key
-compromise and must be described as such.
+loopback/trusted-host mutation guard, a bounded single-use browser possession
+challenge before OAuth state, one-shot OAuth state and PKCE, fixed provider
+endpoints, transient tokens, bounded canonical verification, and fold-visible
+outcomes. A same-origin script compromise remains browser-key compromise and
+must be described as such.
 
 **Simplification.** Use one browser key for live proof and durable identity
 acts, one canonical host intent encoder, and one prepare/sign/submit relay.

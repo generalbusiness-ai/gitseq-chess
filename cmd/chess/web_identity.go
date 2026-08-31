@@ -25,6 +25,7 @@ import (
 	application "github.com/generalbusiness-ai/gitseq-chess"
 	"github.com/generalbusiness-ai/gitseq/host"
 	"github.com/generalbusiness-ai/gitseq/host/identity"
+	"github.com/generalbusiness-ai/gitseq/host/live"
 )
 
 const (
@@ -36,6 +37,7 @@ const (
 	identitySignerBytes  = 64 << 10
 	identitySignerReply  = ed25519.PublicKeySize + ed25519.SignatureSize
 	identitySignerWait   = 3 * time.Second
+	githubProofDomain    = "gitseq-chess/github-oauth-possession/v1\x00"
 )
 
 type identityHTTPConfig struct {
@@ -58,6 +60,7 @@ type identityHTTP struct {
 	mu     sync.Mutex
 	states map[string]githubIdentityState
 	drafts map[string]identityDraft
+	proofs map[string]githubPossession
 }
 
 type githubIdentityState struct {
@@ -73,6 +76,13 @@ type identityDraft struct {
 	Prepared host.PreparedAct
 	Actor    string
 	Subject  string
+	Expires  time.Time
+}
+
+type githubPossession struct {
+	ActorKey ed25519.PublicKey
+	Scope    string
+	NotAfter int64
 	Expires  time.Time
 }
 
@@ -92,6 +102,14 @@ type identitySubmitRequest struct {
 	Draft          string `json:"draft"`
 	ActorKey       []byte `json:"actor_key"`
 	ActorSignature []byte `json:"actor_signature"`
+}
+
+type githubPossessionRequest struct {
+	ActorKey       []byte                `json:"actor_key"`
+	Scope          string                `json:"scope"`
+	NotAfter       int64                 `json:"not_after"`
+	Challenge      live.SessionChallenge `json:"challenge"`
+	ActorSignature []byte                `json:"actor_signature"`
 }
 
 func newIdentityHTTP(repo string, config identityHTTPConfig) *identityHTTP {
@@ -119,6 +137,7 @@ func newIdentityHTTP(repo string, config identityHTTPConfig) *identityHTTP {
 	return &identityHTTP{
 		repo: repo, config: config,
 		states: make(map[string]githubIdentityState), drafts: make(map[string]identityDraft),
+		proofs: make(map[string]githubPossession),
 	}
 }
 
@@ -158,6 +177,7 @@ func identityHTTPConfigFromEnvironment() (identityHTTPConfig, error) {
 
 func (service *identityHTTP) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/identity/status", service.status)
+	mux.HandleFunc("POST /v1/identity/github/challenge", service.githubChallenge)
 	mux.HandleFunc("POST /v1/identity/github/start", service.githubStart)
 	mux.HandleFunc("GET /v1/identity/github/callback", service.githubCallback)
 	mux.HandleFunc("POST /v1/identity/nostr/template", service.nostrTemplate)
@@ -189,7 +209,7 @@ func (service *identityHTTP) status(w http.ResponseWriter, request *http.Request
 	serveJSON(w, view)
 }
 
-func (service *identityHTTP) githubStart(w http.ResponseWriter, request *http.Request) {
+func (service *identityHTTP) githubChallenge(w http.ResponseWriter, request *http.Request) {
 	var input identityAnchorRequest
 	if err := decodeHTTPRequest(w, request, &input); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -209,6 +229,41 @@ func (service *identityHTTP) githubStart(w http.ResponseWriter, request *http.Re
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	challenge, signingBytes, err := service.prepareGitHubPossession(public, input.Scope, input.NotAfter)
+	if err != nil {
+		http.Error(w, "GitHub identity is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	serveJSON(w, map[string]any{"challenge": challenge, "signing_bytes": signingBytes})
+}
+
+func (service *identityHTTP) githubStart(w http.ResponseWriter, request *http.Request) {
+	var input githubPossessionRequest
+	if err := decodeHTTPRequest(w, request, &input); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	proof, signingBytes, ok := service.takeGitHubPossession(input.Challenge)
+	if !ok {
+		http.Error(w, "GitHub possession proof is invalid", http.StatusBadRequest)
+		return
+	}
+	public, err := browserPublicKey(input.ActorKey)
+	if err != nil {
+		http.Error(w, "GitHub possession proof is invalid", http.StatusBadRequest)
+		return
+	}
+	if err := service.validateGrant(input.Scope, input.NotAfter); err != nil {
+		http.Error(w, "GitHub possession proof is invalid", http.StatusBadRequest)
+		return
+	}
+	if !bytes.Equal(public, proof.ActorKey) || !bytes.Equal(public, input.Challenge.ActorKey) ||
+		input.Scope != proof.Scope || input.NotAfter != proof.NotAfter ||
+		len(input.ActorSignature) != ed25519.SignatureSize || !ed25519.Verify(public, signingBytes, input.ActorSignature) {
+		http.Error(w, "GitHub possession proof is invalid", http.StatusBadRequest)
+		return
+	}
+	actor := liveFingerprint(public)
 	workspace, _, err := application.OpenProjection(request.Context(), service.repo)
 	if err != nil || service.githubPreflight(request.Context(), workspace) != nil {
 		http.Error(w, "GitHub identity is unavailable", http.StatusServiceUnavailable)
@@ -732,6 +787,66 @@ func (service *identityHTTP) randomToken(size int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
+func (service *identityHTTP) prepareGitHubPossession(public ed25519.PublicKey, scope string, notAfter int64) (live.SessionChallenge, []byte, error) {
+	attempt := make([]byte, 16)
+	if _, err := io.ReadFull(service.config.Random, attempt); err != nil {
+		return live.SessionChallenge{}, nil, err
+	}
+	bound := make([]byte, 0, len(githubProofDomain)+len(attempt)+len(public)+2+len(scope)+8)
+	bound = append(bound, githubProofDomain...)
+	bound = append(bound, attempt...)
+	bound = append(bound, public...)
+	var encoded [8]byte
+	binary.BigEndian.PutUint16(encoded[:2], uint16(len(scope)))
+	bound = append(bound, encoded[:2]...)
+	bound = append(bound, scope...)
+	binary.BigEndian.PutUint64(encoded[:], uint64(notAfter))
+	bound = append(bound, encoded[:]...)
+	nonce := sha256.Sum256(bound)
+	challenge := live.SessionChallenge{
+		Version: 0, Generation: "generation:" + hex.EncodeToString(attempt),
+		Nonce: nonce[:], ActorKey: bytes.Clone(public),
+	}
+	signingBytes, err := live.SessionSigningBytes(challenge)
+	if err != nil {
+		return live.SessionChallenge{}, nil, err
+	}
+	key := githubPossessionKey(signingBytes)
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	service.expireLocked()
+	if len(service.proofs) >= identityMaxPending {
+		return live.SessionChallenge{}, nil, errors.New("pending GitHub proof limit reached")
+	}
+	if _, exists := service.proofs[key]; exists {
+		return live.SessionChallenge{}, nil, errors.New("GitHub proof collision")
+	}
+	service.proofs[key] = githubPossession{
+		ActorKey: bytes.Clone(public), Scope: scope, NotAfter: notAfter,
+		Expires: service.config.Now().Add(live.SessionChallengeTTL),
+	}
+	return challenge, signingBytes, nil
+}
+
+func githubPossessionKey(signingBytes []byte) string {
+	digest := sha256.Sum256(signingBytes)
+	return hex.EncodeToString(digest[:])
+}
+
+func (service *identityHTTP) takeGitHubPossession(challenge live.SessionChallenge) (githubPossession, []byte, bool) {
+	signingBytes, err := live.SessionSigningBytes(challenge)
+	if err != nil {
+		return githubPossession{}, nil, false
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	service.expireLocked()
+	key := githubPossessionKey(signingBytes)
+	proof, ok := service.proofs[key]
+	delete(service.proofs, key)
+	return proof, signingBytes, ok
+}
+
 func (service *identityHTTP) storeState(key string, state githubIdentityState) bool {
 	service.mu.Lock()
 	defer service.mu.Unlock()
@@ -774,6 +889,11 @@ func (service *identityHTTP) takeDraft(key string) (identityDraft, bool) {
 
 func (service *identityHTTP) expireLocked() {
 	now := service.config.Now()
+	for key, proof := range service.proofs {
+		if !now.Before(proof.Expires) {
+			delete(service.proofs, key)
+		}
+	}
 	for key, state := range service.states {
 		if !now.Before(state.Expires) {
 			delete(service.states, key)

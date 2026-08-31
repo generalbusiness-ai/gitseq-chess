@@ -10,6 +10,7 @@ const {
   identityPresentation,
   acceptsOAuthPopupMessage,
   signNostrEvent,
+  startGitHubOAuth,
   sessionKeyNotice,
 } = require("./ui/app.js");
 
@@ -99,6 +100,44 @@ test("OAuth completion accepts only the exact popup and same origin", () => {
   assert.equal(acceptsOAuthPopupMessage({origin: "https://chess.test", source: {}, data: message}, popup, "https://chess.test"), false);
   assert.equal(acceptsOAuthPopupMessage({origin: "https://chess.test", source: popup, data: {...message, type: "identity"}}, popup, "https://chess.test"), false);
   assert.equal(acceptsOAuthPopupMessage({origin: "https://chess.test", source: popup, data: {...message, status: "token"}}, popup, "https://chess.test"), false);
+});
+
+test("OAuth start signs exact server bytes and preserves every bound field", async () => {
+  const actorKey = "browser-public-key";
+  const challenge = {version: 0, generation: "generation:00112233445566778899aabbccddeeff", nonce: "server-nonce", actor_key: actorKey};
+  const signingBytes = Uint8Array.from([0, 1, 2, 127, 128, 255]);
+  const calls = [];
+  const post = async (target, value) => {
+    calls.push([target, value]);
+    if (target.endsWith("/challenge")) return {challenge, signing_bytes: "server-signing-bytes"};
+    return {authorize_url: "https://github.test/authorize"};
+  };
+  const privateKey = {};
+  const subtle = {async sign(algorithm, key, bytes) {
+    assert.equal(algorithm, "Ed25519");
+    assert.equal(key, privateKey);
+    assert.equal(bytes, signingBytes);
+    return Uint8Array.from([3, 4, 5]);
+  }};
+  const result = await startGitHubOAuth(
+    post, subtle, privateKey, actorKey, "chess", 1900000000,
+    (encoded) => {
+      assert.equal(encoded, "server-signing-bytes");
+      return signingBytes;
+    },
+    (signature) => {
+      assert.deepEqual(new Uint8Array(signature), Uint8Array.from([3, 4, 5]));
+      return "browser-signature";
+    },
+  );
+  assert.deepEqual(result, {authorize_url: "https://github.test/authorize"});
+  assert.deepEqual(calls, [
+    ["/v1/identity/github/challenge", {actor_key: actorKey, scope: "chess", not_after: 1900000000}],
+    ["/v1/identity/github/start", {
+      actor_key: actorKey, scope: "chess", not_after: 1900000000,
+      challenge, actor_signature: "browser-signature",
+    }],
+  ]);
 });
 
 test("new fingerprints are distinguished from lost unanchored keys", () => {
