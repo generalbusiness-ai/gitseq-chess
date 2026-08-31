@@ -366,7 +366,7 @@ func runServe(ctx context.Context, args []string, stdout io.Writer) error {
 	if _, _, err := application.OpenProjection(ctx, common.repo); err != nil {
 		return fmt.Errorf("open chess repository %q: %w", common.repo, err)
 	}
-	identityConfig, err := identityHTTPConfigFromEnvironment(ctx, common.repo)
+	identityConfig, err := identityHTTPConfigFromEnvironment()
 	if err != nil {
 		return err
 	}

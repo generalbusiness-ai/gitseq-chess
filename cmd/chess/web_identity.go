@@ -7,13 +7,16 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +33,9 @@ const (
 	identityMaxExpiry    = 90 * 24 * time.Hour
 	identityMaxPending   = 128
 	identityProviderBody = 32 << 10
+	identitySignerBytes  = 64 << 10
+	identitySignerReply  = ed25519.PublicKeySize + ed25519.SignatureSize
+	identitySignerWait   = 3 * time.Second
 )
 
 type identityHTTPConfig struct {
@@ -39,8 +45,9 @@ type identityHTTPConfig struct {
 	GitHubRedirectURL  string
 	GitHubClientID     string
 	GitHubClientSecret string
-	WitnessKey         ed25519.PrivateKey
+	WitnessSocket      string
 	Client             *http.Client
+	SignerTimeout      time.Duration
 	Now                func() time.Time
 	Random             io.Reader
 }
@@ -97,6 +104,9 @@ func newIdentityHTTP(repo string, config identityHTTPConfig) *identityHTTP {
 	if config.Client.Timeout <= 0 {
 		config.Client.Timeout = 10 * time.Second
 	}
+	if config.SignerTimeout <= 0 {
+		config.SignerTimeout = identitySignerWait
+	}
 	config.Client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 		return errors.New("provider redirects are refused")
 	}
@@ -112,7 +122,7 @@ func newIdentityHTTP(repo string, config identityHTTPConfig) *identityHTTP {
 	}
 }
 
-func identityHTTPConfigFromEnvironment(ctx context.Context, repo string) (identityHTTPConfig, error) {
+func identityHTTPConfigFromEnvironment() (identityHTTPConfig, error) {
 	config := identityHTTPConfig{
 		GitHubAuthorizeURL: os.Getenv("GITSEQ_CHESS_GITHUB_AUTHORIZE_URL"),
 		GitHubTokenURL:     os.Getenv("GITSEQ_CHESS_GITHUB_TOKEN_URL"),
@@ -120,10 +130,10 @@ func identityHTTPConfigFromEnvironment(ctx context.Context, repo string) (identi
 		GitHubRedirectURL:  os.Getenv("GITSEQ_CHESS_GITHUB_REDIRECT_URL"),
 		GitHubClientID:     os.Getenv("GITSEQ_CHESS_GITHUB_CLIENT_ID"),
 		GitHubClientSecret: os.Getenv("GITSEQ_CHESS_GITHUB_CLIENT_SECRET"),
+		WitnessSocket:      os.Getenv("GITSEQ_CHESS_IDENTITY_WITNESS_SOCKET"),
 	}
-	witnessPath := os.Getenv("GITSEQ_CHESS_IDENTITY_WITNESS_KEY")
 	configured := config.GitHubRedirectURL != "" || config.GitHubClientID != "" ||
-		config.GitHubClientSecret != "" || witnessPath != "" || config.GitHubAuthorizeURL != "" ||
+		config.GitHubClientSecret != "" || config.WitnessSocket != "" || config.GitHubAuthorizeURL != "" ||
 		config.GitHubTokenURL != "" || config.GitHubUserURL != ""
 	if !configured {
 		return config, nil
@@ -137,17 +147,11 @@ func identityHTTPConfigFromEnvironment(ctx context.Context, repo string) (identi
 	if config.GitHubUserURL == "" {
 		config.GitHubUserURL = "https://api.github.com/user"
 	}
-	if config.GitHubRedirectURL == "" || config.GitHubClientID == "" || config.GitHubClientSecret == "" || witnessPath == "" {
+	if config.GitHubRedirectURL == "" || config.GitHubClientID == "" || config.GitHubClientSecret == "" || config.WitnessSocket == "" {
 		return identityHTTPConfig{}, errors.New("GitHub identity configuration is incomplete")
 	}
-	store, err := openKeyStore(ctx, witnessPath, repo, true)
-	if err != nil {
-		return identityHTTPConfig{}, errors.New("GitHub witness key is unavailable")
-	}
-	defer store.Close()
-	config.WitnessKey, err = readKey(store)
-	if err != nil {
-		return identityHTTPConfig{}, errors.New("GitHub witness key is unavailable")
+	if !filepath.IsAbs(config.WitnessSocket) {
+		return identityHTTPConfig{}, errors.New("GitHub identity witness socket must be an absolute path")
 	}
 	return config, nil
 }
@@ -267,21 +271,95 @@ func (service *identityHTTP) githubCallback(w http.ResponseWriter, request *http
 		http.Error(w, "GitHub identity could not be verified", http.StatusBadGateway)
 		return
 	}
-	record, err := identity.Endorse(request.Context(), workspace, service.config.WitnessKey, identity.Anchor{
+	prepared, err := identity.PrepareEndorsement(request.Context(), workspace, identity.Anchor{
 		Subject: attempt.Subject, Identity: &providerIdentity, Scope: attempt.Scope, NotAfter: attempt.NotAfter,
+	}, githubIdentityRetryKey(query.Get("state")))
+	if err != nil {
+		service.githubAnchorFailure(w)
+		return
+	}
+	signingBytes, err := host.ActorSigningBytes(prepared)
+	if err != nil || len(signingBytes) == 0 || len(signingBytes) > identitySignerBytes {
+		service.githubAnchorFailure(w)
+		return
+	}
+	public, signature, err := service.signGitHubAnchor(request.Context(), signingBytes)
+	if err != nil {
+		service.githubAnchorFailure(w)
+		return
+	}
+	declared, err := githubWitnessKey(request.Context(), workspace)
+	if err != nil || !bytes.Equal(public, declared) || !ed25519.Verify(public, signingBytes, signature) {
+		service.githubAnchorFailure(w)
+		return
+	}
+	record, err := workspace.AppendSigned(request.Context(), host.SignedAct{
+		Prepared: prepared, ActorKey: public, ActorSignature: signature,
 	})
 	if err != nil {
-		http.Error(w, "GitHub identity could not be recorded", http.StatusServiceUnavailable)
+		service.githubAnchorFailure(w)
 		return
 	}
 	outcome := application.IdentityOutcome(request.Context(), workspace, record)
 	if outcome.Outcome != "created" {
-		http.Error(w, "GitHub identity did not create recovery authority", http.StatusConflict)
+		service.githubAnchorFailure(w)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.WriteString(w, `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>GitHub identity complete</title><script src="/assets/app.js" defer></script></head><body data-view="oauth-callback" data-status="complete"><main><h1>Identity connected</h1><p>You may return to the chess game.</p></main></body></html>`)
+}
+
+func githubIdentityRetryKey(state string) string {
+	digest := sha256.Sum256([]byte("gitseq-chess/github-oauth-anchor\x00" + state))
+	return "github-oauth-" + hex.EncodeToString(digest[:])
+}
+
+// The signer protocol is one request and one response per Unix connection.
+// Each frame starts with a four-byte big-endian length. The request body is
+// exactly ActorSigningBytes. The response body is exactly the 32-byte Ed25519
+// public key followed by its 64-byte signature.
+func (service *identityHTTP) signGitHubAnchor(ctx context.Context, signingBytes []byte) (ed25519.PublicKey, []byte, error) {
+	if len(signingBytes) == 0 || len(signingBytes) > identitySignerBytes {
+		return nil, nil, errors.New("signing request is out of bounds")
+	}
+	dialer := net.Dialer{Timeout: service.config.SignerTimeout}
+	connection, err := dialer.DialContext(ctx, "unix", service.config.WitnessSocket)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer connection.Close()
+	deadline := time.Now().Add(service.config.SignerTimeout)
+	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
+		deadline = contextDeadline
+	}
+	if err := connection.SetDeadline(deadline); err != nil {
+		return nil, nil, err
+	}
+	request := make([]byte, 4+len(signingBytes))
+	binary.BigEndian.PutUint32(request[:4], uint32(len(signingBytes)))
+	copy(request[4:], signingBytes)
+	if _, err := io.Copy(connection, bytes.NewReader(request)); err != nil {
+		return nil, nil, err
+	}
+	var header [4]byte
+	if _, err := io.ReadFull(connection, header[:]); err != nil {
+		return nil, nil, err
+	}
+	if binary.BigEndian.Uint32(header[:]) != identitySignerReply {
+		return nil, nil, errors.New("signer response has the wrong size")
+	}
+	response := make([]byte, identitySignerReply)
+	if _, err := io.ReadFull(connection, response); err != nil {
+		return nil, nil, err
+	}
+	public := ed25519.PublicKey(bytes.Clone(response[:ed25519.PublicKeySize]))
+	signature := bytes.Clone(response[ed25519.PublicKeySize:])
+	return public, signature, nil
+}
+
+func (service *identityHTTP) githubAnchorFailure(w http.ResponseWriter) {
+	http.Error(w, "GitHub identity could not be recorded", http.StatusServiceUnavailable)
 }
 
 func (service *identityHTTP) nostrTemplate(w http.ResponseWriter, request *http.Request) {
@@ -488,7 +566,7 @@ func currentIdentityView(ctx context.Context, workspace *host.Workspace, actor s
 
 func (service *identityHTTP) githubEndpoints() (*url.URL, *url.URL, error) {
 	if service.config.GitHubClientID == "" || service.config.GitHubClientSecret == "" ||
-		len(service.config.WitnessKey) != ed25519.PrivateKeySize || service.config.GitHubTokenURL == "" || service.config.GitHubUserURL == "" {
+		service.config.WitnessSocket == "" || service.config.GitHubTokenURL == "" || service.config.GitHubUserURL == "" {
 		return nil, nil, errors.New("GitHub identity is not configured")
 	}
 	authorize, err := fixedEndpoint(service.config.GitHubAuthorizeURL)
@@ -548,20 +626,29 @@ func (service *identityHTTP) githubPreflight(ctx context.Context, workspace *hos
 	if _, _, err := service.githubEndpoints(); err != nil || workspace == nil {
 		return errors.New("GitHub identity is unavailable")
 	}
+	_, err := githubWitnessKey(ctx, workspace)
+	return err
+}
+
+func githubWitnessKey(ctx context.Context, workspace *host.Workspace) (ed25519.PublicKey, error) {
 	log, err := workspace.Records(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	declared, ok := identity.Resolve(log).Witness()
-	if !ok || declared.Key != hex.EncodeToString(service.config.WitnessKey.Public().(ed25519.PublicKey)) {
-		return errors.New("GitHub witness key is not declared")
+	if !ok {
+		return nil, errors.New("GitHub witness key is not declared")
 	}
 	for _, scheme := range declared.Schemes {
 		if scheme == identity.GitHubScheme {
-			return nil
+			key, err := hex.DecodeString(declared.Key)
+			if err != nil || len(key) != ed25519.PublicKeySize {
+				return nil, errors.New("GitHub witness key is invalid")
+			}
+			return ed25519.PublicKey(key), nil
 		}
 	}
-	return errors.New("GitHub witness does not cover GitHub")
+	return nil, errors.New("GitHub witness does not cover GitHub")
 }
 
 func (service *identityHTTP) githubIdentity(ctx context.Context, code, verifier string) (identity.Identity, error) {

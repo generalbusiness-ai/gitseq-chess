@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -39,6 +43,43 @@ func TestIdentityRoutesUseTheBrowserMutationBoundary(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest || response.Body.String() != "unknown query field \"secret\"\n" {
 		t.Fatalf("identity query response = %d %q", response.Code, response.Body.String())
+	}
+}
+
+func TestGitHubOAuthSourceKeepsWitnessCustodyOutsideChessServe(t *testing.T) {
+	sourceBytes, err := os.ReadFile("web_identity.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(sourceBytes)
+	for name, forbidden := range map[string]string{
+		"direct endorsement": "identity." + "Endorse(",
+		"retired key env":    "GITSEQ_CHESS_IDENTITY_" + "WITNESS_KEY",
+		"key-store open":     "open" + "KeyStore(",
+		"private-key config": "Witness" + "Key         ed25519.PrivateKey",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Errorf("production OAuth source crossed %s boundary", name)
+		}
+	}
+	for name, required := range map[string]string{
+		"host preparation": "identity.PrepareEndorsement(",
+		"signing bytes":    "host.ActorSigningBytes(",
+		"signed append":    "workspace.AppendSigned(",
+		"Unix socket":      `DialContext(ctx, "unix"`,
+	} {
+		if !strings.Contains(source, required) {
+			t.Errorf("production OAuth source no longer uses %s boundary", name)
+		}
+	}
+	start := strings.Index(source, "type identityHTTPConfig struct {")
+	end := strings.Index(source, "type identityHTTP struct {")
+	if start < 0 || end <= start {
+		t.Fatal("identityHTTPConfig source boundary is missing")
+	}
+	config := source[start:end]
+	if strings.Contains(config, "ed25519.PrivateKey") || strings.Contains(config, "WitnessKey") {
+		t.Fatal("identityHTTPConfig carries witness private-key custody")
 	}
 }
 
@@ -280,8 +321,9 @@ func TestGitHubOAuthBindsStatePKCEOriginAndRedactsTokens(t *testing.T) {
 	config := identityHTTPConfig{
 		GitHubAuthorizeURL: provider.URL + "/authorize", GitHubTokenURL: provider.URL + "/token",
 		GitHubUserURL: provider.URL + "/user", GitHubRedirectURL: "http://127.0.0.1:8080/v1/identity/github/callback",
-		GitHubClientID: "client-id", GitHubClientSecret: "client-secret-must-not-escape", WitnessKey: witness,
-		Now: func() time.Time { return now }, Client: provider.Client(),
+		GitHubClientID: "client-id", GitHubClientSecret: "client-secret-must-not-escape",
+		WitnessSocket: startIdentitySigner(t, witness, nil),
+		Now:           func() time.Time { return now }, Client: provider.Client(),
 	}
 	runtime, err := newChessLive()
 	if err != nil {
@@ -345,6 +387,222 @@ func TestGitHubOAuthBindsStatePKCEOriginAndRedactsTokens(t *testing.T) {
 	if status["anchored"] != true || status["display"] != "alice [github:4242] (witnessed; in-log)" {
 		t.Fatalf("GitHub identity status = %#v", status)
 	}
+}
+
+func TestGitHubOAuthSignerFailuresAreGenericAndCreateNoAnchor(t *testing.T) {
+	tests := []struct {
+		name    string
+		timeout time.Duration
+		reply   func(t *testing.T, witness ed25519.PrivateKey, initializer ed25519.PrivateKey, workspace *host.Workspace, cancel context.CancelFunc) identitySignerReplyFunc
+	}{
+		{
+			name: "refusal",
+			reply: func(_ *testing.T, _ ed25519.PrivateKey, _ ed25519.PrivateKey, _ *host.Workspace, _ context.CancelFunc) identitySignerReplyFunc {
+				return func([]byte) ([]byte, error) { return nil, errors.New("refused") }
+			},
+		},
+		{
+			name: "oversized response",
+			reply: func(_ *testing.T, _ ed25519.PrivateKey, _ ed25519.PrivateKey, _ *host.Workspace, _ context.CancelFunc) identitySignerReplyFunc {
+				return func([]byte) ([]byte, error) { return make([]byte, identitySignerReply+1), nil }
+			},
+		},
+		{
+			name: "malformed response",
+			reply: func(_ *testing.T, _ ed25519.PrivateKey, _ ed25519.PrivateKey, _ *host.Workspace, _ context.CancelFunc) identitySignerReplyFunc {
+				return func([]byte) ([]byte, error) { return make([]byte, identitySignerReply-1), nil }
+			},
+		},
+		{
+			name: "wrong key",
+			reply: func(t *testing.T, _ ed25519.PrivateKey, _ ed25519.PrivateKey, _ *host.Workspace, _ context.CancelFunc) identitySignerReplyFunc {
+				_, wrong := generateIdentityKey(t)
+				return signedIdentityReply(wrong)
+			},
+		},
+		{
+			name: "bad signature",
+			reply: func(_ *testing.T, witness ed25519.PrivateKey, _ ed25519.PrivateKey, _ *host.Workspace, _ context.CancelFunc) identitySignerReplyFunc {
+				return func(signingBytes []byte) ([]byte, error) {
+					response, _ := signedIdentityReply(witness)(signingBytes)
+					response[len(response)-1] ^= 1
+					return response, nil
+				}
+			},
+		},
+		{
+			name: "replayed signature",
+			reply: func(_ *testing.T, witness ed25519.PrivateKey, _ ed25519.PrivateKey, _ *host.Workspace, _ context.CancelFunc) identitySignerReplyFunc {
+				return func([]byte) ([]byte, error) {
+					response := append([]byte{}, witness.Public().(ed25519.PublicKey)...)
+					return append(response, ed25519.Sign(witness, []byte("an older signing request"))...), nil
+				}
+			},
+		},
+		{
+			name:    "timeout",
+			timeout: 20 * time.Millisecond,
+			reply: func(_ *testing.T, witness ed25519.PrivateKey, _ ed25519.PrivateKey, _ *host.Workspace, _ context.CancelFunc) identitySignerReplyFunc {
+				return func(signingBytes []byte) ([]byte, error) {
+					time.Sleep(100 * time.Millisecond)
+					return signedIdentityReply(witness)(signingBytes)
+				}
+			},
+		},
+		{
+			name: "declaration rotation",
+			reply: func(t *testing.T, witness ed25519.PrivateKey, initializer ed25519.PrivateKey, workspace *host.Workspace, _ context.CancelFunc) identitySignerReplyFunc {
+				rotated, _ := generateIdentityKey(t)
+				return func(signingBytes []byte) ([]byte, error) {
+					if _, err := identity.DeclareWitness(context.Background(), workspace, initializer, rotated, []string{identity.GitHubScheme}); err != nil {
+						return nil, err
+					}
+					return signedIdentityReply(witness)(signingBytes)
+				}
+			},
+		},
+		{
+			name: "append failure",
+			reply: func(_ *testing.T, witness ed25519.PrivateKey, _ ed25519.PrivateKey, _ *host.Workspace, cancel context.CancelFunc) identitySignerReplyFunc {
+				return func(signingBytes []byte) ([]byte, error) {
+					cancel()
+					return signedIdentityReply(witness)(signingBytes)
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			repo, initializer, workspace := newIdentityTestRepository(t, ctx)
+			_, witness := generateIdentityKey(t)
+			if _, err := identity.DeclareWitness(ctx, workspace, initializer, witness.Public().(ed25519.PublicKey), []string{identity.GitHubScheme}); err != nil {
+				t.Fatal(err)
+			}
+			provider := newGitHubTestProvider(t)
+			now := time.Now().Truncate(time.Second)
+			requestContext, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			config := identityHTTPConfig{
+				GitHubAuthorizeURL: provider.URL + "/authorize", GitHubTokenURL: provider.URL + "/token",
+				GitHubUserURL: provider.URL + "/user", GitHubRedirectURL: "http://127.0.0.1:8080/v1/identity/github/callback",
+				GitHubClientID: "client-id", GitHubClientSecret: "client-secret",
+				Now: func() time.Time { return now }, Client: provider.Client(), SignerTimeout: test.timeout,
+			}
+			config.WitnessSocket = startIdentitySigner(t, witness, test.reply(t, witness, initializer, workspace, cancel))
+			runtime, err := newChessLive()
+			if err != nil {
+				t.Fatal(err)
+			}
+			handler := newReadHandlerWithIdentity(ctx, repo, runtime, config)
+			actorPublic, _ := generateIdentityKey(t)
+			var started struct {
+				AuthorizeURL string `json:"authorize_url"`
+			}
+			postJSON(t, handler, "/v1/identity/github/start", identityAnchorRequest{
+				ActorKey: actorPublic, Scope: "chess", NotAfter: now.Add(time.Hour).Unix(),
+			}, &started, http.StatusOK)
+			authorize, err := url.Parse(started.AuthorizeURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			callback := httptest.NewRequest(http.MethodGet, "/v1/identity/github/callback?code=one-time-code&state="+url.QueryEscape(authorize.Query().Get("state")), nil).WithContext(requestContext)
+			callback.Host = "127.0.0.1:8080"
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, callback)
+			if response.Code != http.StatusServiceUnavailable || response.Body.String() != "GitHub identity could not be recorded\n" {
+				t.Fatalf("callback = %d %q, want generic fail-closed result", response.Code, response.Body.String())
+			}
+			log, err := workspace.Records(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, record := range log.Records {
+				if record.Schema == identity.AnchorSchema {
+					t.Fatalf("failed signer path appended anchor %s", record.ID)
+				}
+			}
+		})
+	}
+}
+
+func newGitHubTestProvider(t *testing.T) *httptest.Server {
+	t.Helper()
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/token":
+			serveJSON(w, map[string]string{"access_token": "provider-token", "token_type": "bearer"})
+		case "/user":
+			serveJSON(w, map[string]any{"id": 4242, "login": "alice"})
+		default:
+			http.NotFound(w, request)
+		}
+	}))
+	t.Cleanup(provider.Close)
+	return provider
+}
+
+func signedIdentityReply(key ed25519.PrivateKey) identitySignerReplyFunc {
+	return func(signingBytes []byte) ([]byte, error) {
+		response := append([]byte{}, key.Public().(ed25519.PublicKey)...)
+		return append(response, ed25519.Sign(key, signingBytes)...), nil
+	}
+}
+
+type identitySignerReplyFunc func([]byte) ([]byte, error)
+
+func startIdentitySigner(t *testing.T, key ed25519.PrivateKey, reply identitySignerReplyFunc) string {
+	t.Helper()
+	directory, err := os.MkdirTemp("", "chess-witness-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	path := filepath.Join(directory, "signer.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go serveIdentitySignature(connection, key, reply)
+		}
+	}()
+	return path
+}
+
+func serveIdentitySignature(connection net.Conn, key ed25519.PrivateKey, reply identitySignerReplyFunc) {
+	defer connection.Close()
+	var header [4]byte
+	if _, err := io.ReadFull(connection, header[:]); err != nil {
+		return
+	}
+	length := binary.BigEndian.Uint32(header[:])
+	if length == 0 || length > identitySignerBytes {
+		return
+	}
+	signingBytes := make([]byte, length)
+	if _, err := io.ReadFull(connection, signingBytes); err != nil {
+		return
+	}
+	var response []byte
+	var err error
+	if reply != nil {
+		response, err = reply(signingBytes)
+		if err != nil {
+			return
+		}
+	} else {
+		response = append(response, key.Public().(ed25519.PublicKey)...)
+		response = append(response, ed25519.Sign(key, signingBytes)...)
+	}
+	binary.BigEndian.PutUint32(header[:], uint32(len(response)))
+	_, _ = connection.Write(append(header[:], response...))
 }
 
 func newIdentityTestRepository(t *testing.T, ctx context.Context) (string, ed25519.PrivateKey, *host.Workspace) {

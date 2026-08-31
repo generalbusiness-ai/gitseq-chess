@@ -206,8 +206,8 @@ authorization URL contains only protocol values such as the one-shot state and
 PKCE challenge, not any of those secrets.
 
 GitHub anchoring is disabled unless the repository already declares a
-`github` witness matching the key named by
-`GITSEQ_CHESS_IDENTITY_WITNESS_KEY`. Configure
+`github` witness and chess serve can reach the deployment's signer through the
+absolute Unix-socket path in `GITSEQ_CHESS_IDENTITY_WITNESS_SOCKET`. Configure
 `GITSEQ_CHESS_GITHUB_CLIENT_ID`, `GITSEQ_CHESS_GITHUB_CLIENT_SECRET`, and
 `GITSEQ_CHESS_GITHUB_REDIRECT_URL`; the redirect must be the exact loopback
 `/v1/identity/github/callback` URL served by this process. The authorization,
@@ -216,6 +216,20 @@ fixed values through `GITSEQ_CHESS_GITHUB_AUTHORIZE_URL`,
 `GITSEQ_CHESS_GITHUB_TOKEN_URL`, and `GITSEQ_CHESS_GITHUB_USER_URL`, for example
 to use a loopback test provider. Partial or mismatched configuration fails
 closed when `chess serve` starts.
+
+Chess serve never opens or receives the witness private key. After the GitHub
+lookup, it prepares the exact host identity endorsement with a stable retry
+key and sends only `host.ActorSigningBytes` to the socket. The signer protocol
+uses one connection per signature. Each frame begins with a four-byte
+big-endian length. The request body is the signing bytes. The response body is
+exactly 96 bytes: the 32-byte Ed25519 public key followed by the 64-byte
+signature. The signer must hold the private key outside the chess serve
+process. Chess bounds the request and response, applies a three-second
+deadline, requires the returned key to equal the currently declared GitHub
+witness, verifies the signature, and gives the unchanged prepared act to
+`Workspace.AppendSigned`. Refusal, timeout, malformed response, key rotation,
+signature failure, or append failure produces the same generic error and no
+effective identity anchor.
 
 The same server exposes bounded, read-only JSON endpoints:
 
