@@ -34,7 +34,7 @@
           {{range .Squares}}<button class="square {{if .Dark}}dark{{else}}light{{end}}" type="button" data-square="{{.Name}}" title="{{.Name}}" aria-label="{{.Label}}"><span aria-hidden="true">{{.Piece}}</span></button>{{end}}
         </div>
         <p id="move-help" class="move-help" aria-live="polite">Select a piece to see its valid destinations.</p>
-        <p class="read-only">This is a read-only board. Use the command line or MCP adapter to make a signed move.</p>
+        <p class="read-only">This is a read-only board showing only durable moves. Use the command line or MCP adapter to submit a signed chess act.</p>
         <div class="position-meta">
           <span>Moves {{.Game.Moves}}</span>
           {{if .Game.LastMoveUCI}}<span>Last move <code>{{.Game.LastMoveUCI}}</code></span>{{end}}
@@ -51,6 +51,37 @@
         <ol>{{range .Refused}}<li><strong>{{.Reason}}</strong> <code>{{.Record}}</code></li>{{end}}</ol>
       </section>{{end}}
       </section>
+      <aside class="right-rail">
+      <section class="identity-panel" aria-labelledby="identity-heading">
+        <div class="identity-heading">
+          <div>
+            <p class="eyebrow">Browser identity</p>
+            <h2 id="identity-heading">Session and anchor</h2>
+          </div>
+          <button id="create-tab-key" type="button">Create tab key</button>
+        </div>
+        <p>A non-exportable Ed25519 key lives only in this tab. The service receives its public half and your signatures, never its private half.</p>
+        <dl class="identity-facts">
+          <div><dt>Session key</dt><dd><code id="identity-fingerprint">No tab key yet</code></dd></div>
+          <div><dt id="identity-title">Unanchored session key</dt><dd id="identity-persistent">No persistent identity is linked to this key.</dd></div>
+          <div><dt>Vouching</dt><dd id="identity-vouching">unvouched</dd></div>
+          <div><dt>Verification</dt><dd id="identity-verification">unverified</dd></div>
+        </dl>
+        <p id="identity-recovery" class="identity-recovery">An unanchored seat cannot be recovered after its exact tab key is lost.</p>
+        <div class="identity-controls">
+          <label>Scope <select id="identity-scope"><option value="game">This game only</option><option value="chess">All chess games</option></select></label>
+          <label>Expires in <input id="identity-expiry" type="number" min="1" max="720" value="168"> hours</label>
+        </div>
+        <div class="identity-actions">
+          <button id="anchor-github" type="button" disabled>Anchor with GitHub</button>
+          <button id="anchor-nostr" type="button" disabled>Anchor with Nostr</button>
+        </div>
+        <form id="agent-endorsement-form" class="agent-endorsement-form">
+          <label for="agent-subject">Agent key fingerprint</label>
+          <div><input id="agent-subject" autocomplete="off" maxlength="128"><button type="submit" disabled>Endorse agent key</button></div>
+        </form>
+        <p id="identity-message" class="identity-message" aria-live="polite">Create a tab key to inspect or anchor its durable identity.</p>
+      </section>
       <section class="live-panel" aria-labelledby="live-title">
         <div class="live-heading">
           <h2 id="live-title">Live room</h2>
@@ -66,12 +97,13 @@
           <div><input id="chat-text" name="text" maxlength="16384" disabled><button type="submit" disabled>Send</button></div>
         </form>
       </section>
+      </aside>
     </section>
   </main>
   <dialog class="help-dialog" data-help-dialog aria-labelledby="help-title">
     <form method="dialog"><button class="dialog-close" aria-label="Close help">×</button></form>
     <h2 id="help-title">How to play</h2>
-    <p>Watch the durable position here, and use the command line or gitseq-chess MCP server for signed game actions. Presence, motion previews, and chat in this page are temporary.</p>
+    <p>Watch the durable position here, and use the command line or gitseq-chess MCP server for signed game actions. The identity panel can durably anchor this tab's public key; presence, motion previews, and chat remain temporary.</p>
     {{if and .Game.AdmissionOpen (or (not .Game.White) (not .Game.Black))}}<p class="join-instruction">This game has an open seat. Tell your agent: “Use the gitseq-chess MCP <code>join</code> tool to join game <code>{{.Game.ID}}</code>.”</p>{{end}}
   </dialog>
 </body>

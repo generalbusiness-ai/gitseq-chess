@@ -71,7 +71,11 @@ func newChessLive() (*chessLive, error) {
 	}, nil
 }
 
-func newReadHandlerWithLive(_ context.Context, repo string, runtime *chessLive) http.Handler {
+func newReadHandlerWithLive(ctx context.Context, repo string, runtime *chessLive) http.Handler {
+	return newReadHandlerWithIdentity(ctx, repo, runtime, identityHTTPConfig{})
+}
+
+func newReadHandlerWithIdentity(_ context.Context, repo string, runtime *chessLive, identityConfig identityHTTPConfig) http.Handler {
 	mux := http.NewServeMux()
 	read := projectionReader(func(requestContext context.Context) (application.Projection, error) {
 		_, projection, err := application.OpenProjection(requestContext, repo)
@@ -194,6 +198,7 @@ func newReadHandlerWithLive(_ context.Context, repo string, runtime *chessLive) 
 		serveJSON(w, map[string]any{"destinations": selection.Destinations, "reason": selection.Reason, "head": projection.Head})
 	})
 	runtime.register(mux, read)
+	newIdentityHTTP(repo, identityConfig).register(mux)
 	return securityHeaders(rejectLiveQueries(trustedLiveHost(mux)))
 }
 
@@ -202,7 +207,7 @@ func newReadHandlerWithLive(_ context.Context, repo string, runtime *chessLive) 
 // becoming a DNS-rebinding path into process-local credentials and state.
 func trustedLiveHost(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if request.Method == http.MethodPost && strings.HasPrefix(request.URL.Path, "/v1/live/") {
+		if request.Method == http.MethodPost && browserMutationPath(request.URL.Path) {
 			if !loopbackRequestHost(request.Host) {
 				http.Error(w, "mutation host must resolve only to loopback", http.StatusBadRequest)
 				return
@@ -214,6 +219,10 @@ func trustedLiveHost(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, request)
 	})
+}
+
+func browserMutationPath(path string) bool {
+	return strings.HasPrefix(path, "/v1/live/") || strings.HasPrefix(path, "/v1/identity/")
 }
 
 func loopbackRequestHost(value string) bool {
@@ -255,7 +264,8 @@ func guardLiveMutation(request *http.Request) error {
 
 func rejectLiveQueries(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if strings.HasPrefix(request.URL.Path, "/v1/live/") {
+		if strings.HasPrefix(request.URL.Path, "/v1/live/") ||
+			(strings.HasPrefix(request.URL.Path, "/v1/identity/") && request.URL.Path != "/v1/identity/github/callback") {
 			if _, err := boundedQuery(request, nil); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return

@@ -154,20 +154,26 @@ that does not belong to the initializing actor is refused without changing the
 record log. Rebinding appends one host binding record; it does not rewrite the
 existing Git objects or chess records.
 
-## Web view, read service, and MCP
+## Web view, identity, read service, and MCP
 
-`chess serve` prints the address of an embedded, read-only web interface. Its
-lobby and game pages render only the current durable fold. Selecting a square
-asks the fold's rules engine for legal destinations; the browser does not carry
-a second chess implementation. The page reloads when the verified frontier
+`chess serve` prints the address of an embedded web interface. Its lobby and
+game pages render only the current durable fold. Selecting a square asks the
+fold's rules engine for legal destinations; the browser does not carry a
+second chess implementation. The page reloads when the verified frontier
 moves. A separate process-local live room shows watchers, signed chat, and
-legal motion previews. Those previews never move the durable board.
+legal motion previews. Those previews never move the durable board. Durable
+chess moves still use the command line or MCP adapter; the browser's only
+durable write surface is the shared host identity vocabulary described below.
 
-Watching is keyless. Joining presence or chat creates a non-exportable
-Ed25519 private key in browser memory, proves possession to the server, and
-keeps the server-minted lease credential in memory too. Reloading or closing
-the tab loses both. The server derives white, black, or watcher status from the
-folded seats through `Projection.SeatFor`; the browser cannot claim a role.
+Watching is keyless. Creating a browser identity or joining presence creates
+one non-exportable Ed25519 private key in browser memory, proves possession to
+the server, and reuses the same key for identity endorsements. The private key
+and the server-minted live lease credential remain in memory only. Reloading or
+closing the tab loses both and a fresh session has a different public
+fingerprint. It stores neither the key nor its previous public fingerprint, so
+each session stands visibly on its current fingerprint alone. The server derives
+white, black, or watcher status from the folded seats through
+`Projection.SeatFor`; the browser cannot claim a role.
 That query is a live preview at the last-record instant. It is position-exact
 and timestamp-optimistic: it may say yes where a later append refuses on
 expiry, never the reverse. Durable move acceptance remains the judgment. Live
@@ -176,8 +182,68 @@ presented as durable history.
 Drag and submit hints are bounded presence values, not chat history, and vanish
 when the lease renews or expires. A newly generated browser key is normally a
 watcher for CLI-created games; the page can receive and animate hints from an
-authorized seated session, while durable browser seat custody and submission
-remain outside this service.
+authorized seated session.
+
+The identity panel reports persistent identity, vouching, and verification as
+separate facts from the current session fingerprint. “Unanchored” never means
+recoverable: if an exact-key seat is lost before an effective chess act binds
+it to an anchor, a different key cannot recover that seat. A new tab key may be
+anchored to the same persistent identity and chess scope through either:
+
+- same-origin GitHub OAuth that begins only after the tab signs a bounded,
+  one-shot server challenge for its public key, requested scope, expiry, and
+  OAuth attempt, then uses state and PKCE and a deployment-witnessed host
+  anchor; or
+- a NIP-07 signer, which receives the exact server-produced event object and
+  returns a Nostr root signature carried in the durable anchor.
+
+An already anchored tab key can also endorse an agent-key fingerprint. Every
+endorsement has an explicit `chess` or `chess:<game>` scope and an expiry. The
+browser signs the host's exact prepared bytes with its tab key; it does not
+encode an alternative identity payload or signing intent. OAuth tokens and
+PKCE verifiers stay transient in the server. Provider tokens, root private
+keys, tab private keys, live credentials, and bearer values are never placed
+in browser storage, URLs, server storage, logs, or error text. The OAuth
+authorization URL contains only protocol values such as the one-shot state and
+PKCE challenge, not any of those secrets. The possession signature and its
+short-lived challenge travel only in POST bodies, are consumed on the first
+matching start attempt, and never become OAuth state or a reusable session.
+
+GitHub anchoring is disabled unless the repository already declares a
+`github` witness and chess serve can reach the deployment's signer through the
+absolute Unix-socket path in `GITSEQ_CHESS_IDENTITY_WITNESS_SOCKET`. Configure
+`GITSEQ_CHESS_GITHUB_CLIENT_ID`, `GITSEQ_CHESS_GITHUB_CLIENT_SECRET`, and
+`GITSEQ_CHESS_GITHUB_REDIRECT_URL`; the redirect must be the exact loopback
+`/v1/identity/github/callback` URL served by this process. The authorization,
+token, and user endpoints default to GitHub. Deployments may replace them with
+fixed values through `GITSEQ_CHESS_GITHUB_AUTHORIZE_URL`,
+`GITSEQ_CHESS_GITHUB_TOKEN_URL`, and `GITSEQ_CHESS_GITHUB_USER_URL`, for example
+to use a loopback test provider. Partial or mismatched configuration fails
+closed when `chess serve` starts.
+
+Chess serve never opens or receives the witness private key. After the GitHub
+lookup, it prepares the exact host identity endorsement with a stable retry
+key and sends only `host.ActorSigningBytes` to the socket. The signer protocol
+uses one connection per signature. Each frame begins with a four-byte
+big-endian length. The request body is the signing bytes. The response body is
+exactly 96 bytes: the 32-byte Ed25519 public key followed by the 64-byte
+signature. The signer must hold the private key outside the chess serve
+process. Chess bounds the request and response, applies a three-second
+deadline, requires the returned key to equal the currently declared GitHub
+witness, verifies the signature, and gives the unchanged prepared act to
+`Workspace.AppendSigned`. Refusal, timeout, malformed response, key rotation,
+signature failure, or append failure produces the same generic error and no
+effective identity anchor.
+
+Access to this blind signer socket grants witness signing authority. Put the
+socket in an owner-controlled private directory and give the socket owner-only
+permissions, or enforce an equivalent peer-authenticated local boundary that
+admits only the intended chess serve identity. Never expose or bridge the
+signer over TCP or another network transport, and never put its socket in a
+shared directory or make it available to a shared group. Moving the private
+key out of chess serve separates key custody; it is not a policy boundary
+against a compromised authorized serve. The signer necessarily trusts that
+authorized process to supply the exact prepared signing bytes.
 
 The same server exposes bounded, read-only JSON endpoints:
 
@@ -185,10 +251,11 @@ The same server exposes bounded, read-only JSON endpoints:
 - `GET /v1/board?game=<game>`
 - `GET /v1/legal?game=<game>&from=e2`
 
-The durable browser write path belongs to later work. This service accepts only
-the public half and signatures for its ephemeral live room; it never receives
-a private key and has no HTTP endpoint for durable chess acts. Use the command
-line or MCP adapter for signed moves, joins, draws, and resignations.
+The service never receives a browser private key and has no HTTP endpoint for
+durable chess acts. Use the command line or MCP adapter for signed moves, joins,
+draws, and resignations. Identity status is read from the folded
+`host/identity` projection; a recorded but ineffective, expired, or revoked
+endorsement is not presented as an active anchor.
 
 `chess mcp --repo game-data --key agent.key` runs a newline-delimited JSON-RPC
 MCP adapter on standard input and output. It offers bounded game listing, board

@@ -366,7 +366,15 @@ func runServe(ctx context.Context, args []string, stdout io.Writer) error {
 	if _, _, err := application.OpenProjection(ctx, common.repo); err != nil {
 		return fmt.Errorf("open chess repository %q: %w", common.repo, err)
 	}
-	server := newChessHTTPServer(*listen, newReadHandler(ctx, common.repo))
+	identityConfig, err := identityHTTPConfigFromEnvironment()
+	if err != nil {
+		return err
+	}
+	runtime, err := newChessLive()
+	if err != nil {
+		return errors.New("live runtime is unavailable")
+	}
+	server := newChessHTTPServer(*listen, newReadHandlerWithIdentity(ctx, common.repo, runtime, identityConfig))
 	fmt.Fprintln(stdout, "http://"+*listen)
 	return server.ListenAndServe()
 }
