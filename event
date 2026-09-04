@@ -1,1 +1,1 @@
-{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:1fec0205f6e96af0eb22da89d58ca0066668fa66","text":"Merge retired a covered predecessor; the successor is at go.mod."}
+{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:34c278b5aeb7c335f34ede20a655426de73cfc6e","text":"Merge retired a covered predecessor; the successor is at notes/2026-08-27-browser-playability.md."}
