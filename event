@@ -1,1 +1,1 @@
-{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:4c07c656264cf1ddd98988c735b3e733f4a0866b","text":"Merge retired a covered predecessor; the successor is at cmd/chess/ui/lobby.html."}
+{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:4e0112484a49fae6c1e6c1b667a6ee9038895640","text":"Merge retired a covered predecessor; the successor is at cmd/chess/ui/game.html."}
