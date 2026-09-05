@@ -1,1 +1,1 @@
-{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:e1e76263781806879952f397a33703ba8ebbfec4","text":"Merge retired a covered predecessor; the successor is at README.md."}
+{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:ee3a456be355ecf2d37c5669b9e6936fc6ecf45a","text":"Merge retired a covered predecessor; the successor is at cmd/chess/writer_lock_unix.go."}
