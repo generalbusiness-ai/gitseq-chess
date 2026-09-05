@@ -1,1 +1,1 @@
-{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:f83ea6e249da3eb7e6d3f6c9f25fa5e3d851a159","text":"Merge retired a covered predecessor; the successor is at chess.go."}
+{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:fa7d1876cb9d8ef3a15084cd736165d91c2a9c34","text":"Merge retired a covered predecessor; the successor is at cmd/chess/main_test.go."}
