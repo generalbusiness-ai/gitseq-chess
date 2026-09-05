@@ -1125,7 +1125,7 @@ func TestREADMEWalkthroughCreatesKeysNamesAJoinedGameAndPlays(t *testing.T) {
 	}
 	readme := string(source)
 	for _, want := range []string{
-		"There is no separate\nkey-generation command",
+		"chess keygen --key <path>",
 		`--name "First game"`,
 		"--key bob.key --game '<game-id>'",
 		"--move e2e4",

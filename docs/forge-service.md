@@ -1,7 +1,7 @@
 # Run a forge-confirmed Chess service
 
 This recipe supports one Linux host, one repository on a local POSIX
-filesystem, and browsers on that same host. The service listens only on
+filesystem, and browsers and agents on that same host. The service listens only on
 loopback. Public hosting, independent writer clones and multiple-host failover
 still require the separate deployment decision in the adopted
 [browser-delivery design](../notes/2026-09-04-browser-delivery.md).
@@ -143,3 +143,19 @@ Expired and revoked key fixtures exercise the real browser signing and HTTP
 submission path; their preprovisioned keys are test inputs, while the normal
 players use actual memory-only generated tab keys. The workroom artifact
 records the exact source, image, commands, record counts and results.
+
+## Connect a local agent
+
+Use [local agent access](local-agent.md) to configure CLI or stdio MCP with the
+service's loopback origin, canonical genesis and an existing private player
+key. This client does not need the repository mount or either service secret.
+It never takes writer ownership. Both native game submissions and browser
+submissions share the existing append and exact forge-confirmation boundary.
+
+The native client retains one exact signed attempt before submission. Unlike a
+browser's in-memory draft, it survives service and adapter restarts and can
+recover the original record after the board has moved. Restore forge transport
+and use the native `retry` command/tool; a locally appended but unconfirmed
+record remains pending until the remote confirmation succeeds. Reads continue
+to use the confirmed prefix. The public-host decision and actual browser-human
+plus own-agent acceptance remain separate gates.

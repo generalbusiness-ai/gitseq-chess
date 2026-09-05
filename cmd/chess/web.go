@@ -242,7 +242,7 @@ func trustedLiveHost(next http.Handler) http.Handler {
 }
 
 func browserMutationPath(path string) bool {
-	return strings.HasPrefix(path, "/v1/live/") || strings.HasPrefix(path, "/v1/identity/") || path == "/v1/actions/prepare" || path == "/v1/actions/submit"
+	return strings.HasPrefix(path, "/v1/live/") || strings.HasPrefix(path, "/v1/identity/") || strings.HasPrefix(path, "/v1/actions/")
 }
 
 func loopbackRequestHost(value string) bool {

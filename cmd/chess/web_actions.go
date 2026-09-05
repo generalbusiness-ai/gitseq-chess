@@ -57,6 +57,7 @@ func newGameActionsHTTP(repo string) *gameActionsHTTP {
 func (s *gameActionsHTTP) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/actions/prepare", s.prepare)
 	mux.HandleFunc("POST /v1/actions/submit", s.submit)
+	s.registerAgent(mux)
 }
 
 func (s *gameActionsHTTP) prune() {

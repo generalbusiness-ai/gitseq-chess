@@ -426,6 +426,24 @@ func (v *repositoryView) Prepare(act host.Act) (host.PreparedAct, error) {
 	}
 	return s.workspace.Prepare(act)
 }
+
+// prepareReplay only reconstructs bytes for signature verification. Unlike a
+// new preparation, it must work while an earlier append awaits forge delivery:
+// AppendSigned will reconcile that exact pending history before any intake.
+func (v *repositoryView) prepareReplay(act host.Act) (host.PreparedAct, error) {
+	s := v.repository
+	if !s.write.TryLock() {
+		return host.PreparedAct{}, errors.New("repository is busy")
+	}
+	defer s.write.Unlock()
+	if s.owner != nil {
+		if err := s.owner.checkFile(); err != nil {
+			return host.PreparedAct{}, err
+		}
+	}
+	return s.workspace.Prepare(act)
+}
+
 func (v *repositoryView) PrepareEndorsement(ctx context.Context, a identity.Anchor, key string) (host.PreparedAct, error) {
 	s := v.repository
 	s.write.Lock()
