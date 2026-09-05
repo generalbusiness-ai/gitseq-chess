@@ -1,0 +1,103 @@
+{
+  "game": "git:sha1:685391a81914026b945662724b6c48a95c8d831f#git:sha1:385f25efa7e28391ca5e98174037517830b8f48e",
+  "genesis": "685391a81914026b945662724b6c48a95c8d831f",
+  "initial_head": "01b8121e2cb7b270c3951fb6605c8854cc48d77f",
+  "old_white_key": "279732ce272bab9f0550dce0aaa930123184c9ebe40a112ac02d5a998c4aee39",
+  "base": "/tmp/chess-forge-acceptance-adj4unp9",
+  "port": 18089,
+  "forge_port": 19418,
+  "twoIsolatedBrowserContexts": true,
+  "platform": "linux",
+  "chromium": "152.0.7977.75",
+  "containerHostNetwork": true,
+  "firstKey": "e45ee63c8bf808b087f4f67f2a1c7cd9a812b244b0674fde233f4af98bde8ac3",
+  "recoveredKey": "e8dc75ceb0e7ecea938d8dad35608a5af05d45d6ee548365612c32f81d9c96d4",
+  "oldKeyRecovery": true,
+  "tabReloadRecovery": true,
+  "explicitBrowserStorageCleared": true,
+  "storageClears": 2,
+  "onboardingInteractions": {
+    "white": {
+      "clicks": 2,
+      "changes": 1
+    },
+    "black": {
+      "clicks": 2,
+      "changes": 0
+    }
+  },
+  "totalInteractions": {
+    "white": {
+      "clicks": 18,
+      "changes": 3
+    },
+    "black": {
+      "clicks": 9,
+      "changes": 0
+    }
+  },
+  "unanchoredRefused": {
+    "depth": 11,
+    "effective": false,
+    "head": "0786aad51e67e2e2fe2fe5306b97957fc4a51771",
+    "reason": "actor does not hold the side to move",
+    "record": "git:sha1:685391a81914026b945662724b6c48a95c8d831f#git:sha1:0786aad51e67e2e2fe2fe5306b97957fc4a51771"
+  },
+  "wrongIdentityRefused": {
+    "depth": 13,
+    "effective": false,
+    "head": "1d882c7778a74ed41da86cce30015bc04394f0fb",
+    "reason": "actor does not hold the side to move",
+    "record": "git:sha1:685391a81914026b945662724b6c48a95c8d831f#git:sha1:1d882c7778a74ed41da86cce30015bc04394f0fb"
+  },
+  "preprovisionedNegativeKeys": {
+    "expired": {
+      "depth": 14,
+      "effective": false,
+      "head": "9d5a0e49d5b2eec8a414399598395b22b3112eda",
+      "reason": "actor does not hold the side to move",
+      "record": "git:sha1:685391a81914026b945662724b6c48a95c8d831f#git:sha1:9d5a0e49d5b2eec8a414399598395b22b3112eda"
+    },
+    "revoked": {
+      "depth": 15,
+      "effective": false,
+      "head": "a3ac99ac124e675bfd161cc24ee0a6b48c9900ad",
+      "reason": "actor does not hold the side to move",
+      "record": "git:sha1:685391a81914026b945662724b6c48a95c8d831f#git:sha1:a3ac99ac124e675bfd161cc24ee0a6b48c9900ad"
+    }
+  },
+  "exactLostResponseRetry": {
+    "record": "git:sha1:685391a81914026b945662724b6c48a95c8d831f#git:sha1:e4a5a1a71f50d3bdfc19e82ebb44860bee2b1339",
+    "depth": 10
+  },
+  "final": {
+    "depth": 18,
+    "effective": true,
+    "head": "4c8c29094fad73769f8b173f0cf658e327f07b61",
+    "record": "git:sha1:685391a81914026b945662724b6c48a95c8d831f#git:sha1:4c8c29094fad73769f8b173f0cf658e327f07b61"
+  },
+  "outcome": "Black-Wins By Checkmate",
+  "pageErrors": [],
+  "sourceHead": "c0d2aad0bd54fb44103a330870e6df4873c3f589",
+  "imageID": "sha256:4cb371613300d5992101b765af62d01ce0930882415d87f9222738952276bf72",
+  "imageLabels": {
+    "org.opencontainers.image.revision": "c0d2aad0bd54fb44103a330870e6df4873c3f589",
+    "org.opencontainers.image.source": "https://github.com/generalbusiness-ai/gitseq-chess"
+  },
+  "linux": "Linux-7.0.0-28-generic-aarch64-with-glibc2.43",
+  "hostUser": "uid=501(hughpyle) gid=1000(hughpyle) groups=1000(hughpyle),999(systemd-journal)",
+  "forgeTransport": "authenticated loopback Git HTTP fixture on Linux 127.0.0.1:19418",
+  "confirmedHead": "4c8c29094fad73769f8b173f0cf658e327f07b61",
+  "remoteHead": "4c8c29094fad73769f8b173f0cf658e327f07b61",
+  "localHead": "4c8c29094fad73769f8b173f0cf658e327f07b61",
+  "bundleSHA256": "f2c45798274536770c52fe731d667266bddc20ae40c24c82c2fbd47b24d18cb5",
+  "goRace": "env -u GIT_PAGER go test ./... -race -count=1 passed (root23.952s, cmd/chess67.217s)",
+  "nodeTests": 15,
+  "mutants": [
+    "early-ack",
+    "pending-read",
+    "no-writer-lock",
+    "ambient-override-refusal"
+  ],
+  "negativeFixtureNote": "Expired and revoked cases import preprovisioned isolated fixture keys as nonexportable browser keys. Normal players create memory-only keys through the actual UI. No private fixture key is included in this evidence."
+}
