@@ -56,6 +56,7 @@ type identityHTTPConfig struct {
 
 type identityHTTP struct {
 	repo   string
+	open   repositoryOpener
 	config identityHTTPConfig
 	mu     sync.Mutex
 	states map[string]githubIdentityState
@@ -135,7 +136,7 @@ func newIdentityHTTP(repo string, config identityHTTPConfig) *identityHTTP {
 		config.Random = rand.Reader
 	}
 	return &identityHTTP{
-		repo: repo, config: config,
+		repo: repo, config: config, open: localRepositoryOpener(repo),
 		states: make(map[string]githubIdentityState), drafts: make(map[string]identityDraft),
 		proofs: make(map[string]githubPossession),
 	}
@@ -196,7 +197,7 @@ func (service *identityHTTP) status(w http.ResponseWriter, request *http.Request
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	workspace, _, err := application.OpenProjection(request.Context(), service.repo)
+	workspace, _, err := service.open(request.Context())
 	if err != nil {
 		http.Error(w, "repository is unavailable", http.StatusServiceUnavailable)
 		return
@@ -264,7 +265,7 @@ func (service *identityHTTP) githubStart(w http.ResponseWriter, request *http.Re
 		return
 	}
 	actor := liveFingerprint(public)
-	workspace, _, err := application.OpenProjection(request.Context(), service.repo)
+	workspace, _, err := service.open(request.Context())
 	if err != nil || service.githubPreflight(request.Context(), workspace) != nil {
 		http.Error(w, "GitHub identity is unavailable", http.StatusServiceUnavailable)
 		return
@@ -316,7 +317,7 @@ func (service *identityHTTP) githubCallback(w http.ResponseWriter, request *http
 		http.Error(w, "GitHub callback is invalid", http.StatusBadRequest)
 		return
 	}
-	workspace, _, err := application.OpenProjection(request.Context(), service.repo)
+	workspace, _, err := service.open(request.Context())
 	if err != nil || service.githubPreflight(request.Context(), workspace) != nil {
 		http.Error(w, "GitHub identity is unavailable", http.StatusServiceUnavailable)
 		return
@@ -326,7 +327,7 @@ func (service *identityHTTP) githubCallback(w http.ResponseWriter, request *http
 		http.Error(w, "GitHub identity could not be verified", http.StatusBadGateway)
 		return
 	}
-	prepared, err := identity.PrepareEndorsement(request.Context(), workspace, identity.Anchor{
+	prepared, err := workspace.PrepareEndorsement(request.Context(), identity.Anchor{
 		Subject: attempt.Subject, Identity: &providerIdentity, Scope: attempt.Scope, NotAfter: attempt.NotAfter,
 	}, githubIdentityRetryKey(query.Get("state")))
 	if err != nil {
@@ -339,6 +340,14 @@ func (service *identityHTTP) githubCallback(w http.ResponseWriter, request *http
 		return
 	}
 	public, signature, err := service.signGitHubAnchor(request.Context(), signingBytes)
+	if err != nil {
+		service.githubAnchorFailure(w)
+		return
+	}
+	// Signing crosses an external process boundary. Re-read the confirmed
+	// witness declaration before using the reply; an older snapshot cannot
+	// authorize a signer that was replaced while the request was in flight.
+	workspace, _, err = service.open(request.Context())
 	if err != nil {
 		service.githubAnchorFailure(w)
 		return
@@ -437,7 +446,7 @@ func (service *identityHTTP) nostrTemplate(w http.ResponseWriter, request *http.
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	workspace, _, err := application.OpenProjection(request.Context(), service.repo)
+	workspace, _, err := service.open(request.Context())
 	if err != nil {
 		http.Error(w, "repository is unavailable", http.StatusServiceUnavailable)
 		return
@@ -480,7 +489,7 @@ func (service *identityHTTP) prepareEndorsement(w http.ResponseWriter, request *
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	workspace, _, err := application.OpenProjection(request.Context(), service.repo)
+	workspace, _, err := service.open(request.Context())
 	if err != nil {
 		http.Error(w, "repository is unavailable", http.StatusServiceUnavailable)
 		return
@@ -494,7 +503,7 @@ func (service *identityHTTP) prepareEndorsement(w http.ResponseWriter, request *
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
-	prepared, err := identity.PrepareEndorsement(request.Context(), workspace, identity.Anchor{
+	prepared, err := workspace.PrepareEndorsement(request.Context(), identity.Anchor{
 		Subject: input.Subject, Scope: input.Scope, NotAfter: input.NotAfter, Nostr: input.Nostr,
 	}, "")
 	if err != nil {
@@ -536,7 +545,7 @@ func (service *identityHTTP) submitEndorsement(w http.ResponseWriter, request *h
 		http.Error(w, "identity draft is invalid", http.StatusBadRequest)
 		return
 	}
-	workspace, _, err := application.OpenProjection(request.Context(), service.repo)
+	workspace, _, err := service.open(request.Context())
 	if err != nil {
 		http.Error(w, "repository is unavailable", http.StatusServiceUnavailable)
 		return
@@ -575,7 +584,7 @@ func (service *identityHTTP) validateGrant(scope string, notAfter int64) error {
 	return nil
 }
 
-func (service *identityHTTP) validateDelegation(ctx context.Context, workspace *host.Workspace, actor, scope string, notAfter int64) error {
+func (service *identityHTTP) validateDelegation(ctx context.Context, workspace application.RecordReader, actor, scope string, notAfter int64) error {
 	log, err := workspace.Records(ctx)
 	if err != nil || len(log.Records) == 0 {
 		return errors.New("anchored identity is required")
@@ -599,7 +608,7 @@ func (service *identityHTTP) validateDelegation(ctx context.Context, workspace *
 	return errors.New("anchored identity is required")
 }
 
-func currentIdentityView(ctx context.Context, workspace *host.Workspace, actor string) (map[string]any, error) {
+func currentIdentityView(ctx context.Context, workspace application.RecordReader, actor string) (map[string]any, error) {
 	log, err := workspace.Records(ctx)
 	if err != nil {
 		return nil, err
@@ -677,7 +686,7 @@ func (service *identityHTTP) guardGitHubCallback(request *http.Request) error {
 	return nil
 }
 
-func (service *identityHTTP) githubPreflight(ctx context.Context, workspace *host.Workspace) error {
+func (service *identityHTTP) githubPreflight(ctx context.Context, workspace application.RecordReader) error {
 	if _, _, err := service.githubEndpoints(); err != nil || workspace == nil {
 		return errors.New("GitHub identity is unavailable")
 	}
@@ -685,7 +694,7 @@ func (service *identityHTTP) githubPreflight(ctx context.Context, workspace *hos
 	return err
 }
 
-func githubWitnessKey(ctx context.Context, workspace *host.Workspace) (ed25519.PublicKey, error) {
+func githubWitnessKey(ctx context.Context, workspace application.RecordReader) (ed25519.PublicKey, error) {
 	log, err := workspace.Records(ctx)
 	if err != nil {
 		return nil, err

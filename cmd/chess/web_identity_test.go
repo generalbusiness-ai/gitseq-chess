@@ -90,10 +90,10 @@ func TestGitHubOAuthSourceKeepsWitnessCustodyOutsideChessServe(t *testing.T) {
 		}
 	}
 	for name, required := range map[string]string{
-		"host preparation": "identity.PrepareEndorsement(",
-		"signing bytes":    "host.ActorSigningBytes(",
-		"signed append":    "workspace.AppendSigned(",
-		"Unix socket":      `DialContext(ctx, "unix"`,
+		"confirmed host preparation": "workspace.PrepareEndorsement(",
+		"signing bytes":              "host.ActorSigningBytes(",
+		"signed append":              "workspace.AppendSigned(",
+		"Unix socket":                `DialContext(ctx, "unix"`,
 	} {
 		if !strings.Contains(source, required) {
 			t.Errorf("production OAuth source no longer uses %s boundary", name)

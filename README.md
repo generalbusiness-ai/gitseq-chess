@@ -67,6 +67,13 @@ loopback address with `--listen`; the command refuses non-loopback addresses so
 the local live-room service cannot be exposed accidentally. Board, HTTP, and
 MCP responses never include key material.
 
+For one Linux host with forge-confirmed storage, use the
+[container and recovery recipe](docs/forge-service.md). All supported writers
+share the repository's OS lock. Stop a running `serve` or writing MCP process
+before using another CLI/MCP writer, including for initial game creation.
+Read-only commands can run alongside the service. Forge mode acknowledges
+writes only after the exact remote sequence head is confirmed.
+
 ### Invite with a shared secret
 
 An open game accepts the first valid join. To invite someone privately instead,
