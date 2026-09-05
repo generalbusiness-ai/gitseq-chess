@@ -1,1 +1,1 @@
-{"kind":"artifact","text":"Merge published the current artifact at notes/2026-09-05-local-agent-transport.md","body":{"commit":"7416d8daa9a71f949932dd9d47c8da4e1e7ba4da","path":"notes/2026-09-05-local-agent-transport.md"}}
+{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:6a3308bbe7720227c693e374c9ddf3b89d8538de","text":"Merge retired a covered predecessor; the successor is at notes/2026-09-05-local-agent-transport.md."}
