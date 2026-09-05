@@ -1,0 +1,632 @@
+{
+  "source_head": "e7a65612a8270b12f676a35e97c66aaf2a705a30",
+  "scratch_directory": "/var/folders/2x/wylr59t17ds36l1l7ng25y7w0000gn/T/chess-own-agent-diagnostic-snoqdq7t",
+  "events": [
+    {
+      "step": "initialize disposable local repository",
+      "result": {
+        "exit": 0,
+        "stdout": "{\n  \"genesis\": \"1e003ff8655b16adcfffa4fbce4f4493fe6a693b\",\n  \"player_key\": \"/private/var/folders/2x/wylr59t17ds36l1l7ng25y7w0000gn/T/chess-own-agent-diagnostic-snoqdq7t/game-data/.git/chess/player.key\",\n  \"repository\": \"/var/folders/2x/wylr59t17ds36l1l7ng25y7w0000gn/T/chess-own-agent-diagnostic-snoqdq7t/game-data\"\n}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "step": "create as local first player",
+      "result": {
+        "exit": 0,
+        "stdout": "{\n  \"effective\": true,\n  \"game\": \"git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:b01b8421af4dbeb810c908e65989ba1decfcf7b2\",\n  \"record\": \"git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:b01b8421af4dbeb810c908e65989ba1decfcf7b2\"\n}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "step": "agent joins while service stopped",
+      "result": {
+        "exit": 0,
+        "stdout": "{\n  \"effective\": true,\n  \"record\": \"git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:d1a554a7bc7b73ca24142323619e738a4cfee9e6\"\n}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "step": "first player e2e4 while service stopped",
+      "result": {
+        "exit": 0,
+        "stdout": "{\n  \"effective\": true,\n  \"record\": \"git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:ec09cf96632ed3cd35e5f12538aa4fbd99e52f73\"\n}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "step": "owning service HTTP read ready",
+      "result": {
+        "games": [
+          {
+            "id": "git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:b01b8421af4dbeb810c908e65989ba1decfcf7b2",
+            "name": "own-agent transport diagnostic",
+            "admission_open": true,
+            "created_at": 1788601141,
+            "creator": "3acb7ad62f05c5e24b04945801eb6b3153c61645457b83ad2e5f96d77c041d38",
+            "white": "3acb7ad62f05c5e24b04945801eb6b3153c61645457b83ad2e5f96d77c041d38",
+            "black": "853dc7c3edd1fc2ce29c6fb87804e01c3399ec325e8ddeb1c7be25c914bf4bfb",
+            "status": "playing",
+            "turn": "b",
+            "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+            "last_move": "git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:ec09cf96632ed3cd35e5f12538aa4fbd99e52f73",
+            "last_move_uci": "e2e4",
+            "moves": 1
+          }
+        ],
+        "head": "ec09cf96632ed3cd35e5f12538aa4fbd99e52f73",
+        "next": ""
+      }
+    },
+    {
+      "step": "CLI read while service owns writer",
+      "result": {
+        "exit": 0,
+        "stdout": "{\n  \"id\": \"git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:b01b8421af4dbeb810c908e65989ba1decfcf7b2\",\n  \"name\": \"own-agent transport diagnostic\",\n  \"admission_open\": true,\n  \"created_at\": 1788601141,\n  \"creator\": \"3acb7ad62f05c5e24b04945801eb6b3153c61645457b83ad2e5f96d77c041d38\",\n  \"white\": \"3acb7ad62f05c5e24b04945801eb6b3153c61645457b83ad2e5f96d77c041d38\",\n  \"black\": \"853dc7c3edd1fc2ce29c6fb87804e01c3399ec325e8ddeb1c7be25c914bf4bfb\",\n  \"status\": \"playing\",\n  \"turn\": \"b\",\n  \"fen\": \"rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1\",\n  \"last_move\": \"git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:ec09cf96632ed3cd35e5f12538aa4fbd99e52f73\",\n  \"last_move_uci\": \"e2e4\",\n  \"moves\": 1\n}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "step": "CLI agent e7e5 while service owns writer",
+      "result": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "chess: another Chess writer owns this repository\n"
+      }
+    },
+    {
+      "step": "MCP initialize ",
+      "result": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "capabilities": {
+            "tools": {}
+          },
+          "protocolVersion": "2025-11-25",
+          "serverInfo": {
+            "name": "gitseq-chess",
+            "version": "chess-fold@2"
+          }
+        }
+      }
+    },
+    {
+      "step": "MCP tools/call show_board",
+      "result": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "content": [
+            {
+              "text": "{\"game\":{\"id\":\"git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:b01b8421af4dbeb810c908e65989ba1decfcf7b2\",\"name\":\"own-agent transport diagnostic\",\"admission_open\":true,\"created_at\":1788601141,\"creator\":\"3acb7ad62f05c5e24b04945801eb6b3153c61645457b83ad2e5f96d77c041d38\",\"white\":\"3acb7ad62f05c5e24b04945801eb6b3153c61645457b83ad2e5f96d77c041d38\",\"black\":\"853dc7c3edd1fc2ce29c6fb87804e01c3399ec325e8ddeb1c7be25c914bf4bfb\",\"status\":\"playing\",\"turn\":\"b\",\"fen\":\"rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1\",\"last_move\":\"git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:ec09cf96632ed3cd35e5f12538aa4fbd99e52f73\",\"last_move_uci\":\"e2e4\",\"moves\":1},\"head\":\"ec09cf96632ed3cd35e5f12538aa4fbd99e52f73\"}",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "game": {
+              "id": "git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:b01b8421af4dbeb810c908e65989ba1decfcf7b2",
+              "name": "own-agent transport diagnostic",
+              "admission_open": true,
+              "created_at": 1788601141,
+              "creator": "3acb7ad62f05c5e24b04945801eb6b3153c61645457b83ad2e5f96d77c041d38",
+              "white": "3acb7ad62f05c5e24b04945801eb6b3153c61645457b83ad2e5f96d77c041d38",
+              "black": "853dc7c3edd1fc2ce29c6fb87804e01c3399ec325e8ddeb1c7be25c914bf4bfb",
+              "status": "playing",
+              "turn": "b",
+              "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+              "last_move": "git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:ec09cf96632ed3cd35e5f12538aa4fbd99e52f73",
+              "last_move_uci": "e2e4",
+              "moves": 1
+            },
+            "head": "ec09cf96632ed3cd35e5f12538aa4fbd99e52f73"
+          }
+        }
+      }
+    },
+    {
+      "step": "MCP tools/call move",
+      "result": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+          "content": [
+            {
+              "text": "another Chess writer owns this repository",
+              "type": "text"
+            }
+          ],
+          "isError": true
+        }
+      }
+    },
+    {
+      "step": "board unchanged after both refused writer attempts",
+      "result": {
+        "exit": 0,
+        "stdout": "{\n  \"id\": \"git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:b01b8421af4dbeb810c908e65989ba1decfcf7b2\",\n  \"name\": \"own-agent transport diagnostic\",\n  \"admission_open\": true,\n  \"created_at\": 1788601141,\n  \"creator\": \"3acb7ad62f05c5e24b04945801eb6b3153c61645457b83ad2e5f96d77c041d38\",\n  \"white\": \"3acb7ad62f05c5e24b04945801eb6b3153c61645457b83ad2e5f96d77c041d38\",\n  \"black\": \"853dc7c3edd1fc2ce29c6fb87804e01c3399ec325e8ddeb1c7be25c914bf4bfb\",\n  \"status\": \"playing\",\n  \"turn\": \"b\",\n  \"fen\": \"rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1\",\n  \"last_move\": \"git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:ec09cf96632ed3cd35e5f12538aa4fbd99e52f73\",\n  \"last_move_uci\": \"e2e4\",\n  \"moves\": 1\n}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "step": "stop owning HTTP service",
+      "result": {
+        "exit": -15
+      }
+    },
+    {
+      "step": "MCP tools/call move",
+      "result": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {
+          "content": [
+            {
+              "text": "{\"effective\":true,\"record\":\"git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:0babf82769e6b83dfd93f0fcd3421b16950ff661\"}",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "effective": true,
+            "record": "git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:0babf82769e6b83dfd93f0fcd3421b16950ff661"
+          }
+        }
+      }
+    },
+    {
+      "step": "MCP now retains writer ownership",
+      "result": true
+    },
+    {
+      "step": "HTTP service restart while writing MCP remains alive",
+      "result": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "chess: open chess repository \"/var/folders/2x/wylr59t17ds36l1l7ng25y7w0000gn/T/chess-own-agent-diagnostic-snoqdq7t/game-data\": another Chess writer owns this repository\n"
+      }
+    },
+    {
+      "step": "stop writing MCP process",
+      "result": {
+        "exit": -15
+      }
+    },
+    {
+      "step": "owning service HTTP read ready",
+      "result": {
+        "games": [
+          {
+            "id": "git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:b01b8421af4dbeb810c908e65989ba1decfcf7b2",
+            "name": "own-agent transport diagnostic",
+            "admission_open": true,
+            "created_at": 1788601141,
+            "creator": "3acb7ad62f05c5e24b04945801eb6b3153c61645457b83ad2e5f96d77c041d38",
+            "white": "3acb7ad62f05c5e24b04945801eb6b3153c61645457b83ad2e5f96d77c041d38",
+            "black": "853dc7c3edd1fc2ce29c6fb87804e01c3399ec325e8ddeb1c7be25c914bf4bfb",
+            "status": "playing",
+            "turn": "w",
+            "fen": "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2",
+            "last_move": "git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:0babf82769e6b83dfd93f0fcd3421b16950ff661",
+            "last_move_uci": "e7e5",
+            "moves": 2
+          }
+        ],
+        "head": "0babf82769e6b83dfd93f0fcd3421b16950ff661",
+        "next": ""
+      }
+    },
+    {
+      "step": "HTTP sees accepted agent reply after both process transitions",
+      "result": {
+        "game": {
+          "id": "git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:b01b8421af4dbeb810c908e65989ba1decfcf7b2",
+          "name": "own-agent transport diagnostic",
+          "admission_open": true,
+          "created_at": 1788601141,
+          "creator": "3acb7ad62f05c5e24b04945801eb6b3153c61645457b83ad2e5f96d77c041d38",
+          "white": "3acb7ad62f05c5e24b04945801eb6b3153c61645457b83ad2e5f96d77c041d38",
+          "black": "853dc7c3edd1fc2ce29c6fb87804e01c3399ec325e8ddeb1c7be25c914bf4bfb",
+          "status": "playing",
+          "turn": "w",
+          "fen": "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2",
+          "last_move": "git:sha1:1e003ff8655b16adcfffa4fbce4f4493fe6a693b#git:sha1:0babf82769e6b83dfd93f0fcd3421b16950ff661",
+          "last_move_uci": "e7e5",
+          "moves": 2
+        },
+        "head": "0babf82769e6b83dfd93f0fcd3421b16950ff661",
+        "refusals": [],
+        "squares": [
+          {
+            "Name": "a8",
+            "Piece": "\u265c",
+            "Label": "black rook at a8",
+            "Dark": false
+          },
+          {
+            "Name": "b8",
+            "Piece": "\u265e",
+            "Label": "black knight at b8",
+            "Dark": true
+          },
+          {
+            "Name": "c8",
+            "Piece": "\u265d",
+            "Label": "black bishop at c8",
+            "Dark": false
+          },
+          {
+            "Name": "d8",
+            "Piece": "\u265b",
+            "Label": "black queen at d8",
+            "Dark": true
+          },
+          {
+            "Name": "e8",
+            "Piece": "\u265a",
+            "Label": "black king at e8",
+            "Dark": false
+          },
+          {
+            "Name": "f8",
+            "Piece": "\u265d",
+            "Label": "black bishop at f8",
+            "Dark": true
+          },
+          {
+            "Name": "g8",
+            "Piece": "\u265e",
+            "Label": "black knight at g8",
+            "Dark": false
+          },
+          {
+            "Name": "h8",
+            "Piece": "\u265c",
+            "Label": "black rook at h8",
+            "Dark": true
+          },
+          {
+            "Name": "a7",
+            "Piece": "\u265f",
+            "Label": "black pawn at a7",
+            "Dark": true
+          },
+          {
+            "Name": "b7",
+            "Piece": "\u265f",
+            "Label": "black pawn at b7",
+            "Dark": false
+          },
+          {
+            "Name": "c7",
+            "Piece": "\u265f",
+            "Label": "black pawn at c7",
+            "Dark": true
+          },
+          {
+            "Name": "d7",
+            "Piece": "\u265f",
+            "Label": "black pawn at d7",
+            "Dark": false
+          },
+          {
+            "Name": "e7",
+            "Piece": "",
+            "Label": "empty at e7",
+            "Dark": true
+          },
+          {
+            "Name": "f7",
+            "Piece": "\u265f",
+            "Label": "black pawn at f7",
+            "Dark": false
+          },
+          {
+            "Name": "g7",
+            "Piece": "\u265f",
+            "Label": "black pawn at g7",
+            "Dark": true
+          },
+          {
+            "Name": "h7",
+            "Piece": "\u265f",
+            "Label": "black pawn at h7",
+            "Dark": false
+          },
+          {
+            "Name": "a6",
+            "Piece": "",
+            "Label": "empty at a6",
+            "Dark": false
+          },
+          {
+            "Name": "b6",
+            "Piece": "",
+            "Label": "empty at b6",
+            "Dark": true
+          },
+          {
+            "Name": "c6",
+            "Piece": "",
+            "Label": "empty at c6",
+            "Dark": false
+          },
+          {
+            "Name": "d6",
+            "Piece": "",
+            "Label": "empty at d6",
+            "Dark": true
+          },
+          {
+            "Name": "e6",
+            "Piece": "",
+            "Label": "empty at e6",
+            "Dark": false
+          },
+          {
+            "Name": "f6",
+            "Piece": "",
+            "Label": "empty at f6",
+            "Dark": true
+          },
+          {
+            "Name": "g6",
+            "Piece": "",
+            "Label": "empty at g6",
+            "Dark": false
+          },
+          {
+            "Name": "h6",
+            "Piece": "",
+            "Label": "empty at h6",
+            "Dark": true
+          },
+          {
+            "Name": "a5",
+            "Piece": "",
+            "Label": "empty at a5",
+            "Dark": true
+          },
+          {
+            "Name": "b5",
+            "Piece": "",
+            "Label": "empty at b5",
+            "Dark": false
+          },
+          {
+            "Name": "c5",
+            "Piece": "",
+            "Label": "empty at c5",
+            "Dark": true
+          },
+          {
+            "Name": "d5",
+            "Piece": "",
+            "Label": "empty at d5",
+            "Dark": false
+          },
+          {
+            "Name": "e5",
+            "Piece": "\u265f",
+            "Label": "black pawn at e5",
+            "Dark": true
+          },
+          {
+            "Name": "f5",
+            "Piece": "",
+            "Label": "empty at f5",
+            "Dark": false
+          },
+          {
+            "Name": "g5",
+            "Piece": "",
+            "Label": "empty at g5",
+            "Dark": true
+          },
+          {
+            "Name": "h5",
+            "Piece": "",
+            "Label": "empty at h5",
+            "Dark": false
+          },
+          {
+            "Name": "a4",
+            "Piece": "",
+            "Label": "empty at a4",
+            "Dark": false
+          },
+          {
+            "Name": "b4",
+            "Piece": "",
+            "Label": "empty at b4",
+            "Dark": true
+          },
+          {
+            "Name": "c4",
+            "Piece": "",
+            "Label": "empty at c4",
+            "Dark": false
+          },
+          {
+            "Name": "d4",
+            "Piece": "",
+            "Label": "empty at d4",
+            "Dark": true
+          },
+          {
+            "Name": "e4",
+            "Piece": "\u2659",
+            "Label": "white pawn at e4",
+            "Dark": false
+          },
+          {
+            "Name": "f4",
+            "Piece": "",
+            "Label": "empty at f4",
+            "Dark": true
+          },
+          {
+            "Name": "g4",
+            "Piece": "",
+            "Label": "empty at g4",
+            "Dark": false
+          },
+          {
+            "Name": "h4",
+            "Piece": "",
+            "Label": "empty at h4",
+            "Dark": true
+          },
+          {
+            "Name": "a3",
+            "Piece": "",
+            "Label": "empty at a3",
+            "Dark": true
+          },
+          {
+            "Name": "b3",
+            "Piece": "",
+            "Label": "empty at b3",
+            "Dark": false
+          },
+          {
+            "Name": "c3",
+            "Piece": "",
+            "Label": "empty at c3",
+            "Dark": true
+          },
+          {
+            "Name": "d3",
+            "Piece": "",
+            "Label": "empty at d3",
+            "Dark": false
+          },
+          {
+            "Name": "e3",
+            "Piece": "",
+            "Label": "empty at e3",
+            "Dark": true
+          },
+          {
+            "Name": "f3",
+            "Piece": "",
+            "Label": "empty at f3",
+            "Dark": false
+          },
+          {
+            "Name": "g3",
+            "Piece": "",
+            "Label": "empty at g3",
+            "Dark": true
+          },
+          {
+            "Name": "h3",
+            "Piece": "",
+            "Label": "empty at h3",
+            "Dark": false
+          },
+          {
+            "Name": "a2",
+            "Piece": "\u2659",
+            "Label": "white pawn at a2",
+            "Dark": false
+          },
+          {
+            "Name": "b2",
+            "Piece": "\u2659",
+            "Label": "white pawn at b2",
+            "Dark": true
+          },
+          {
+            "Name": "c2",
+            "Piece": "\u2659",
+            "Label": "white pawn at c2",
+            "Dark": false
+          },
+          {
+            "Name": "d2",
+            "Piece": "\u2659",
+            "Label": "white pawn at d2",
+            "Dark": true
+          },
+          {
+            "Name": "e2",
+            "Piece": "",
+            "Label": "empty at e2",
+            "Dark": false
+          },
+          {
+            "Name": "f2",
+            "Piece": "\u2659",
+            "Label": "white pawn at f2",
+            "Dark": true
+          },
+          {
+            "Name": "g2",
+            "Piece": "\u2659",
+            "Label": "white pawn at g2",
+            "Dark": false
+          },
+          {
+            "Name": "h2",
+            "Piece": "\u2659",
+            "Label": "white pawn at h2",
+            "Dark": true
+          },
+          {
+            "Name": "a1",
+            "Piece": "\u2656",
+            "Label": "white rook at a1",
+            "Dark": true
+          },
+          {
+            "Name": "b1",
+            "Piece": "\u2658",
+            "Label": "white knight at b1",
+            "Dark": false
+          },
+          {
+            "Name": "c1",
+            "Piece": "\u2657",
+            "Label": "white bishop at c1",
+            "Dark": true
+          },
+          {
+            "Name": "d1",
+            "Piece": "\u2655",
+            "Label": "white queen at d1",
+            "Dark": false
+          },
+          {
+            "Name": "e1",
+            "Piece": "\u2654",
+            "Label": "white king at e1",
+            "Dark": true
+          },
+          {
+            "Name": "f1",
+            "Piece": "\u2657",
+            "Label": "white bishop at f1",
+            "Dark": false
+          },
+          {
+            "Name": "g1",
+            "Piece": "\u2658",
+            "Label": "white knight at g1",
+            "Dark": true
+          },
+          {
+            "Name": "h1",
+            "Piece": "\u2656",
+            "Label": "white rook at h1",
+            "Dark": false
+          }
+        ]
+      }
+    },
+    {
+      "step": "browser acceptance",
+      "result": "Not performed: browser runtime unavailable. HTTP reads and CLI/MCP commands are diagnostic evidence only."
+    }
+  ],
+  "owned_processes_reaped": true
+}
