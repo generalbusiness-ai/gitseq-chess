@@ -1,0 +1,28 @@
+--- FAIL: TestForgeAppendWaitsForExactRemoteConfirmationAndRetriesOnce (1.37s)
+    repository_test.go:101: pushes=0
+FAIL
+FAIL	github.com/generalbusiness-ai/gitseq-chess/cmd/chess	1.695s
+FAIL
+
+
+--- FAIL: TestForgeOutageFreezesIntakeAndEveryReadSurface (3.27s)
+    repository_test.go:172: /v1/games leaked pending join
+FAIL
+FAIL	github.com/generalbusiness-ai/gitseq-chess/cmd/chess	3.583s
+FAIL
+
+
+--- FAIL: TestWriterOwnershipIsSharedByLinkedWorktrees (1.00s)
+    repository_test.go:473: linked worktree acquired a second writer
+FAIL
+FAIL	github.com/generalbusiness-ai/gitseq-chess/cmd/chess	1.317s
+FAIL
+
+
+--- FAIL: TestForgeHostRefusesAmbientGitOverridesBeforeAppend (0.97s)
+    --- FAIL: TestForgeHostRefusesAmbientGitOverridesBeforeAppend/GIT_DIR (0.48s)
+        repository_test.go:513: ambient override reached host and append: <nil>
+    repository_test.go:530: refused input changed owned unrelated store
+FAIL
+FAIL	github.com/generalbusiness-ai/gitseq-chess/cmd/chess	1.332s
+FAIL
