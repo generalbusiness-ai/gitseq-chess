@@ -950,14 +950,24 @@ func CreateNamed(ctx context.Context, ws *host.Workspace, signer ed25519.Private
 
 // Join records an attempt to take the open opponent seat.
 func Join(ctx context.Context, ws *host.Workspace, signer ed25519.PrivateKey, game, secret, idempotencyKey string) (host.Record, error) {
-	if invalidText(game) {
-		return host.Record{}, errors.New("game is required")
-	}
-	payload, err := encode(JoinPayload{Game: game, Secret: secret})
+	act, err := JoinAct(game, secret, idempotencyKey)
 	if err != nil {
 		return host.Record{}, err
 	}
-	return ws.Append(ctx, signer, host.Act{Schema: SchemaJoin, Payload: payload, RestsOn: []string{game}, IdempotencyKey: idempotencyKey})
+	return ws.Append(ctx, signer, act)
+}
+
+// JoinAct builds the same signed application act for local and browser custody.
+// Preparing it reserves no seat; the fold decides admission when sequenced.
+func JoinAct(game, secret, idempotencyKey string) (host.Act, error) {
+	if invalidText(game) {
+		return host.Act{}, errors.New("game is required")
+	}
+	payload, err := encode(JoinPayload{Game: game, Secret: secret})
+	if err != nil {
+		return host.Act{}, err
+	}
+	return host.Act{Schema: SchemaJoin, Payload: payload, RestsOn: []string{game}, IdempotencyKey: idempotencyKey}, nil
 }
 
 // Move records a UCI move on the current accepted move chain.
@@ -970,11 +980,24 @@ func Move(ctx context.Context, ws *host.Workspace, signer ed25519.PrivateKey, ga
 	if !ok || current.LastMove == "" {
 		return host.Record{}, errors.New("game is not ready for a move")
 	}
-	payload, err := encode(MovePayload{Game: game, Move: move})
+	act, err := MoveAct(game, move, current.LastMove, idempotencyKey)
 	if err != nil {
 		return host.Record{}, err
 	}
-	return ws.Append(ctx, signer, host.Act{Schema: SchemaMove, Payload: payload, RestsOn: []string{current.LastMove}, IdempotencyKey: idempotencyKey})
+	return ws.Append(ctx, signer, act)
+}
+
+// MoveAct binds a UCI move to the explicit accepted predecessor supplied by a
+// verified projection. It does not decide legality or refresh a stale intent.
+func MoveAct(game, move, predecessor, idempotencyKey string) (host.Act, error) {
+	if invalidText(game) || invalidText(predecessor) {
+		return host.Act{}, errors.New("game and predecessor are required")
+	}
+	payload, err := encode(MovePayload{Game: game, Move: move})
+	if err != nil {
+		return host.Act{}, err
+	}
+	return host.Act{Schema: SchemaMove, Payload: payload, RestsOn: []string{predecessor}, IdempotencyKey: idempotencyKey}, nil
 }
 
 // Resign records a resignation on the current accepted move chain.

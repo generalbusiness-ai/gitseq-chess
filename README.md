@@ -55,7 +55,7 @@ Each write reports its accepted record identifier and an `effective` decision.
 An illegal move or a lost join race remains in the history with a short refusal
 reason, but does not change the game.
 
-To watch the board and use temporary presence and chat, start the local web
+To play in the browser and use temporary presence and chat, start the local web
 view and open the printed address:
 
 ```sh
@@ -159,13 +159,27 @@ existing Git objects or chess records.
 `chess serve` prints the address of an embedded web interface. Its lobby and
 game pages render only the current durable fold. Selecting a square asks the
 fold's rules engine for legal destinations; the browser does not carry a
-second chess implementation. The page reloads when the verified frontier
-moves. A separate process-local live room shows watchers, signed chat, and
-legal motion previews. Those previews never move the durable board. Durable
-chess moves still use the command line or MCP adapter; the browser's only
-durable write surface is the shared host identity vocabulary described below.
+second chess implementation. The game page refreshes its board when the
+verified frontier moves, retaining its tab key. A separate process-local live
+room shows watchers, signed chat, and legal motion previews. Those previews
+never move the durable board.
 
-Watching is keyless. Creating a browser identity or joining presence creates
+Choose **Join game** for an open seat. To move, select a piece, wait for the
+highlighted destinations, then select one; choose the promotion piece first
+when needed. Check the confirmation and choose **Sign and submit**. Each join
+or move uses the same vocabulary and fold as CLI and MCP actions. The page
+shows recorded refusals, including lost join races and stale moves, without
+changing the accepted position. To join by secret, use the game's HTTP URL
+with `#secret=<URL-encoded-secret>` appended. The page takes the fragment into
+memory and clears it from the address before preparing the join; the secret
+travels in the POST body and becomes public in the signed join record.
+
+If the response is lost, **Retry the same signed action** sends the original
+draft and signature, preserving its record and idempotency key. Drafts expire
+after five minutes or a service restart. An expired or unknown draft requires
+a board refresh and an explicit new choice; it is never silently recreated.
+
+Watching is keyless. Preparing an action, creating an identity or joining presence creates
 one non-exportable Ed25519 private key in browser memory, proves possession to
 the server, and reuses the same key for identity endorsements. The private key
 and the server-minted live lease credential remain in memory only. Reloading or
@@ -251,9 +265,10 @@ The same server exposes bounded, read-only JSON endpoints:
 - `GET /v1/board?game=<game>`
 - `GET /v1/legal?game=<game>&from=e2`
 
-The service never receives a browser private key and has no HTTP endpoint for
-durable chess acts. Use the command line or MCP adapter for signed moves, joins,
-draws, and resignations. Identity status is read from the folded
+The service never receives a browser private key. Two narrowly scoped POST
+endpoints prepare and submit joins and moves; [the architecture reference](docs/reference/architecture.md)
+describes their bounds and signing contract. Create, draw and resign actions
+remain available through the command line and MCP adapter. Identity status is read from the folded
 `host/identity` projection; a recorded but ineffective, expired, or revoked
 endorsement is not presented as an active anchor.
 
@@ -312,4 +327,6 @@ decisions.
   endorser is likewise durable and refused, and the anchor remains listed.
 
 Run `go test -count=1 ./...` for fold, mutation-witness, invitation, pagination,
-and real external-host integration coverage.
+and real external-host integration coverage. The signing parity test requires
+Node with WebCrypto Ed25519 support. Run `node --test cmd/chess/app_ui_test.cjs`
+for browser action-echo and existing identity/live helper coverage.

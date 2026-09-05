@@ -173,7 +173,18 @@ func newReadHandlerWithIdentity(_ context.Context, repo string, runtime *chessLi
 			http.Error(w, "game does not exist", http.StatusNotFound)
 			return
 		}
-		serveJSON(w, map[string]any{"game": game, "head": projection.Head})
+		squares, err := boardSquares(game.FEN)
+		if err != nil {
+			http.Error(w, "folded board is unavailable", 503)
+			return
+		}
+		refusals := []application.Refusal{}
+		for _, refusal := range projection.Refused {
+			if refusal.Game == game.ID {
+				refusals = append(refusals, refusal)
+			}
+		}
+		serveJSON(w, map[string]any{"game": game, "squares": squares, "refusals": refusals, "head": projection.Head})
 	})
 	mux.HandleFunc("GET /v1/legal", func(w http.ResponseWriter, request *http.Request) {
 		query, err := boundedQuery(request, map[string]queryRule{
@@ -199,6 +210,7 @@ func newReadHandlerWithIdentity(_ context.Context, repo string, runtime *chessLi
 	})
 	runtime.register(mux, read)
 	newIdentityHTTP(repo, identityConfig).register(mux)
+	newGameActionsHTTP(repo).register(mux)
 	return securityHeaders(rejectLiveQueries(trustedLiveHost(mux)))
 }
 
@@ -222,7 +234,7 @@ func trustedLiveHost(next http.Handler) http.Handler {
 }
 
 func browserMutationPath(path string) bool {
-	return strings.HasPrefix(path, "/v1/live/") || strings.HasPrefix(path, "/v1/identity/")
+	return strings.HasPrefix(path, "/v1/live/") || strings.HasPrefix(path, "/v1/identity/") || path == "/v1/actions/prepare" || path == "/v1/actions/submit"
 }
 
 func loopbackRequestHost(value string) bool {
@@ -264,7 +276,7 @@ func guardLiveMutation(request *http.Request) error {
 
 func rejectLiveQueries(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if strings.HasPrefix(request.URL.Path, "/v1/live/") ||
+		if strings.HasPrefix(request.URL.Path, "/v1/actions/") || strings.HasPrefix(request.URL.Path, "/v1/live/") ||
 			(strings.HasPrefix(request.URL.Path, "/v1/identity/") && request.URL.Path != "/v1/identity/github/callback") {
 			if _, err := boundedQuery(request, nil); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
