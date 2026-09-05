@@ -278,6 +278,9 @@ func TestForgeProcessHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Retain the owner just as the real entry points do. Otherwise the file
+	// finalizer may release it while this helper blocks waiting to be killed.
+	defer s.Close()
 	data, err := os.ReadFile(os.Getenv("CHESS_TEST_FORGE_ACT"))
 	if err != nil {
 		t.Fatal(err)
