@@ -1,7 +1,0 @@
-{
-  "source_head": "0def23f727c82b2f51e29af05e1b9336cb5c1d80",
-  "source_origin": "https://github.com/generalbusiness-ai/gitseq-chess.git",
-  "platform": "Darwin arm64",
-  "toolchain": "go1.26.7",
-  "workspace": "off"
-}
