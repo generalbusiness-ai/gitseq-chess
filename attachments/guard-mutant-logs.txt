@@ -1,0 +1,23 @@
+--- FAIL: TestForgeAppendWaitsForExactRemoteConfirmationAndRetriesOnce (0.72s)
+    repository_test.go:101: pushes=0
+FAIL
+FAIL	github.com/generalbusiness-ai/gitseq-chess/cmd/chess	1.173s
+FAIL
+
+--- FAIL: TestForgeOutageFreezesIntakeAndEveryReadSurface (2.10s)
+    repository_test.go:172: /v1/games leaked pending join
+FAIL
+FAIL	github.com/generalbusiness-ai/gitseq-chess/cmd/chess	2.443s
+FAIL
+
+--- FAIL: TestWriterOwnershipIsSharedByLinkedWorktrees (0.84s)
+    repository_test.go:470: linked worktree acquired a second writer
+FAIL
+FAIL	github.com/generalbusiness-ai/gitseq-chess/cmd/chess	1.141s
+FAIL
+
+--- FAIL: TestWriterOwnershipAndForgeConfigurationIgnoreAmbientGitOverrides (0.67s)
+    repository_test.go:494: ambient configuration changed explicit forge attachment: read gitseq config (run `gs init` first): open /private/var/folders/2x/wylr59t17ds36l1l7ng25y7w0000gn/T/TestWriterOwnershipAndForgeConfigurationIgnoreAmbientGitOverride3809297714/002/forge.git/gitseq/config.json: no such file or directory
+FAIL
+FAIL	github.com/generalbusiness-ai/gitseq-chess/cmd/chess	0.984s
+FAIL
