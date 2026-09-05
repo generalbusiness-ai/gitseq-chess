@@ -7,9 +7,9 @@ and its user interfaces, not the host or kernel.
 | Layer | Owner and contract |
 | --- | --- |
 | 1–4: signed records, storage, order and public host | The pinned Gitseq module verifies binding, signatures and ordered records. Chess uses public `host`, `host/identity` and `host/live` APIs. These contracts are unchanged. |
-| 5: application interpretation | `chess.go` encodes chess acts and folds verified records into games. Seat authority uses the shared identity projection. The fold remains pure and unchanged by browser actions. `JoinAct` and `MoveAct` expose the same pure encoders used by CLI/MCP; `MoveAct` takes an explicit predecessor. |
-| 6: bounded reads | Projection methods provide games, positions and legal destinations. `GET /v1/board` returns the game, head, server-rendered square data and that game's entries from the projection's bounded refusal tail. The browser draws these values without a second rules engine. |
-| 7: CLI, MCP and local browser | `cmd/chess` owns local key custody, HTTP and UI. The browser now prepares and signs joins and moves. CLI/MCP game semantics and existing identity/live surfaces remain unchanged. |
+| 5: application interpretation | `chess.go` encodes chess acts and folds verified records into games. Seat authority uses the shared identity projection. The fold remains pure. `RecordReader` lets decision and identity queries consume a verified prefix without reopening a pending local head. `JoinAct` and `MoveAct` expose the same pure encoders used by CLI/MCP; `MoveAct` takes an explicit predecessor. |
+| 6: bounded reads | Projection methods provide games, positions and legal destinations. In forge mode, every board, identity and live-role reader shares one verified forge-confirmed prefix. `GET /v1/board` returns the game, head, server-rendered square data and that game's entries from the projection's bounded refusal tail. The browser draws these values without a second rules engine. |
+| 7: CLI, MCP and local browser | `cmd/chess` owns local key custody, HTTP and UI. The browser now prepares and signs joins and moves. All supported writers share process-lifetime ownership in the real Git common directory. Optional explicit forge configuration makes append success depend on exact remote confirmation, including identity completion. Game rules and identity authority remain unchanged. |
 
 ## Browser actions
 
@@ -70,11 +70,34 @@ memory until the join is submitted; the signed join reveals its secret.
 
 ## Delivery boundary and verification
 
-This stage provides local browser play. Process-wide writer ownership,
-forge-confirmed visibility, container deployment and the two-browser hosted
-acceptance belong to the subsequent adopted browser-delivery stage. The
-current draft mutex makes no claim to coordinate other CLI/MCP processes or
-remote durability.
+The [forge service recipe](../forge-service.md) defines one POSIX writer and
+one Linux host-network container boundary. `cmd/chess/repository.go` owns
+explicit attachment, append serialization, finite confirmation retries and a
+shared immutable confirmed reader. It uses public host and identity APIs;
+there is no copied kernel encoder or binding implementation. `init`, rebind,
+CLI writes, MCP writes and HTTP serve obey the same OS lock. Read-only CLI/MCP
+queries use the persisted confirmed prefix without taking writer ownership.
+
+Forge mode requires one configured remote with matching fetch/push
+destinations, exact sequence ref and genesis, and a private sequencer key
+path. Inherited Git environment overrides cannot redirect the repository,
+configuration or ownership guard. Startup verifies the signed sequence and
+current binding before append can consume sequencer custody. It retains
+pending history, refuses rollback/divergence, and never silently initializes
+or rebinds a forge repository. Native mode retains local durability.
+
+A local append freezes durable intake until the exact remote advance is
+confirmed. All HTTP game and identity writes share that boundary, including
+GitHub callback and Nostr/agent endorsements. Board and identity status, legal
+queries, live seat roles and callback success consume the same confirmed
+prefix. The GitHub witness declaration is reread after the external signer
+returns, so rotation cannot authorize a stale witness. Draft and body bounds,
+origin guards, memory-only player keys and external witness custody remain.
+
+Only the local Linux loopback container is covered. Public exposure and
+multiple-host failover remain gated; the OS lock does not fence independent
+clones or an administrator. Process-death recovery preserves and confirms the
+original signed append; it is not a power-loss guarantee.
 
 Go tests exercise join races, stale moves, exact retry depth, signature/actor
 and cross-game refusal, restart/expiry/saturation, body/payload limits and

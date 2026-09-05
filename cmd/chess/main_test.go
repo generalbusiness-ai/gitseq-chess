@@ -494,6 +494,9 @@ func TestMCPToolsCallEveryActAndBoundedQueries(t *testing.T) {
 	bob := &commonFlags{repo: repo, key: filepath.Join(t.TempDir(), "bob.key")}
 	call := func(actor *commonFlags, name string, arguments map[string]any) map[string]any {
 		t.Helper()
+		// These calls represent sequential actor processes, each releasing its
+		// writer ownership before the other actor starts.
+		defer actor.close()
 		encodedArguments, err := json.Marshal(arguments)
 		if err != nil {
 			t.Fatal(err)
@@ -1578,7 +1581,7 @@ func TestServeCommandRejectsMissingRepositoryBeforeListening(t *testing.T) {
 	if stdout.Len() != 0 {
 		t.Fatalf("serve stdout = %q, want no listen URL", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), repo) || !strings.Contains(stderr.String(), "resolve git dirs") {
+	if !strings.Contains(stderr.String(), repo) || !strings.Contains(stderr.String(), "locate Git directory") {
 		t.Fatalf("serve error does not name repository and reason: %q", stderr.String())
 	}
 

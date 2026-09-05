@@ -828,9 +828,14 @@ func (p Projection) GamesPage(after string, limit int) ([]Game, string) {
 	return page, next
 }
 
+// RecordReader supplies one verified history, including a service-confirmed prefix.
+type RecordReader interface {
+	Records(context.Context) (host.Log, error)
+}
+
 // Decision reports whether one accepted chess act changed the projection.
 // Unknown and host records are not chess decisions and return found=false.
-func Decision(ctx context.Context, ws *host.Workspace, record string) (effective, found bool, reason string, err error) {
+func Decision(ctx context.Context, ws RecordReader, record string) (effective, found bool, reason string, err error) {
 	projection, err := readProjection(ctx, ws)
 	if err != nil {
 		return false, false, "", err
@@ -1060,7 +1065,7 @@ func RevokeAnchor(ctx context.Context, ws *host.Workspace, signer ed25519.Privat
 // Decision: host identity records remain outside chess judgment. A read failure
 // returns unknown with the durable record identifier rather than either losing
 // the identifier or assuming that an append created authority.
-func IdentityOutcome(ctx context.Context, ws *host.Workspace, record host.Record) IdentityMutation {
+func IdentityOutcome(ctx context.Context, ws RecordReader, record host.Record) IdentityMutation {
 	result := IdentityMutation{Record: record.ID, Outcome: "unknown"}
 	if ws == nil {
 		result.Reason = "record was durably appended, but its identity outcome could not be read: workspace is required"
@@ -1144,7 +1149,7 @@ func IdentityOutcome(ctx context.Context, ws *host.Workspace, record host.Record
 // ListAnchors returns at most limit standing endorsements matching subject or
 // scope. Candidates come only from verified host records, while force,
 // identity, and strength come from identity.Resolve at the verified frontier.
-func ListAnchors(ctx context.Context, ws *host.Workspace, subject, scope string, limit int) (AnchorPage, error) {
+func ListAnchors(ctx context.Context, ws RecordReader, subject, scope string, limit int) (AnchorPage, error) {
 	if ws == nil {
 		return AnchorPage{}, errors.New("workspace is required")
 	}
@@ -1204,7 +1209,7 @@ func invalidIdentityFilter(value string) bool {
 	return len(value) > 128 || strings.TrimSpace(value) != value || strings.ContainsAny(value, "\r\n\x00")
 }
 
-func readProjection(ctx context.Context, ws *host.Workspace) (Projection, error) {
+func readProjection(ctx context.Context, ws RecordReader) (Projection, error) {
 	if ws == nil {
 		return Projection{}, errors.New("workspace is required")
 	}

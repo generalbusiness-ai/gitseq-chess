@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -77,8 +76,18 @@ func runInit(ctx context.Context, args []string, stdout io.Writer) error {
 	if err := requireKeyCustodyPlatform(); err != nil {
 		return err
 	}
-	if output, err := exec.CommandContext(ctx, "git", "init", "-q", *repo).CombinedOutput(); err != nil {
+	if output, err := chessGitCommand(ctx, "init", "-q", *repo).CombinedOutput(); err != nil {
 		return fmt.Errorf("initialize Git repository: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	owner, err := acquireWriter(ctx, *repo)
+	if err != nil {
+		return err
+	}
+	defer owner.Close()
+	if cfg, err := loadForgeConfig(ctx, *repo); err != nil {
+		return err
+	} else if cfg != nil {
+		return errors.New("forge repositories must be attached, never initialized")
 	}
 	store, err := openKeyStore(ctx, "", *repo, false)
 	if err != nil {
@@ -117,6 +126,16 @@ func runRebind(ctx context.Context, args []string, stdout io.Writer, stdin io.Re
 	}
 	if err := requireKeyCustodyPlatform(); err != nil {
 		return err
+	}
+	owner, err := acquireWriter(ctx, *repo)
+	if err != nil {
+		return err
+	}
+	defer owner.Close()
+	if cfg, err := loadForgeConfig(ctx, *repo); err != nil {
+		return err
+	} else if cfg != nil {
+		return errors.New("forge binding changes require explicit operator reconciliation")
 	}
 
 	outgoing, log, err := readableOlderChessLog(ctx, *repo)
@@ -195,10 +214,19 @@ func confirmRebind(stdin io.Reader, stdout io.Writer, outgoing, incoming string)
 }
 
 type commonFlags struct {
-	repo string
-	key  string
-	idem string
+	repo       string
+	key        string
+	idem       string
+	repository *chessRepository
 }
+
+func (f *commonFlags) close() {
+	if f.repository != nil {
+		f.repository.Close()
+		f.repository = nil
+	}
+}
+func (f *commonFlags) confirm(ctx context.Context) error { return f.repository.confirm(ctx) }
 
 func addCommon(set *flag.FlagSet, write bool) *commonFlags {
 	flags := &commonFlags{}
@@ -214,10 +242,22 @@ func openWriter(ctx context.Context, flags *commonFlags) (*host.Workspace, ed255
 	if err := requireKeyCustodyPlatform(); err != nil {
 		return nil, nil, err
 	}
-	workspace, err := host.Open(ctx, flags.repo, application.Application)
-	if err != nil {
-		return nil, nil, err
+	if flags.repository == nil {
+		repository, err := openChessRepository(ctx, flags.repo)
+		if err != nil {
+			return nil, nil, err
+		}
+		flags.repository = repository
 	}
+	if err := flags.repository.ready(ctx); err != nil {
+		if !errors.Is(err, errDeliveryPending) {
+			return nil, nil, err
+		}
+		if err := flags.repository.confirm(ctx); err != nil {
+			return nil, nil, err
+		}
+	}
+	workspace := flags.repository.workspace
 	store, err := openKeyStore(ctx, flags.key, flags.repo, flags.key != "")
 	if err != nil {
 		return nil, nil, err
@@ -234,6 +274,7 @@ func runCreate(ctx context.Context, args []string, stdout io.Writer, stdin io.Re
 	set := flag.NewFlagSet("create", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
 	common := addCommon(set, true)
+	defer common.close()
 	name := set.String("name", "", "short display name for the game")
 	color := set.String("color", "white", "creator color: white or black")
 	inviteKey := set.String("invite-key", "", "invited opponent fingerprint")
@@ -253,6 +294,10 @@ func runCreate(ctx context.Context, args []string, stdout io.Writer, stdin io.Re
 		return err
 	}
 	record, err := application.CreateNamed(ctx, workspace, key, *name, *color, *inviteKey, joinSecret, common.idem)
+	if confirmation := common.confirm(ctx); confirmation != nil {
+		return confirmation
+	}
+
 	if err != nil {
 		return err
 	}
@@ -274,6 +319,7 @@ func runJoin(ctx context.Context, args []string, stdout io.Writer, stdin io.Read
 	set := flag.NewFlagSet("join", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
 	common := addCommon(set, true)
+	defer common.close()
 	game := set.String("game", "", "create record identifier")
 	secretFile := set.String("secret-file", "", "file holding the invitation secret, or - for standard input")
 	if err := parseNoPositionals(set, args); err != nil {
@@ -288,6 +334,10 @@ func runJoin(ctx context.Context, args []string, stdout io.Writer, stdin io.Read
 		return err
 	}
 	record, err := application.Join(ctx, workspace, key, *game, secret, common.idem)
+	if confirmation := common.confirm(ctx); confirmation != nil {
+		return confirmation
+	}
+
 	if err != nil {
 		return err
 	}
@@ -298,6 +348,7 @@ func runMove(ctx context.Context, args []string, stdout io.Writer) error {
 	set := flag.NewFlagSet("move", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
 	common := addCommon(set, true)
+	defer common.close()
 	game := set.String("game", "", "game identifier")
 	move := set.String("move", "", "move in UCI notation, for example e2e4")
 	if err := parseNoPositionals(set, args); err != nil {
@@ -308,6 +359,10 @@ func runMove(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 	record, err := application.Move(ctx, workspace, key, *game, *move, common.idem)
+	if confirmation := common.confirm(ctx); confirmation != nil {
+		return confirmation
+	}
+
 	if err != nil {
 		return err
 	}
@@ -318,6 +373,7 @@ func runResign(ctx context.Context, args []string, stdout io.Writer) error {
 	set := flag.NewFlagSet("resign", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
 	common := addCommon(set, true)
+	defer common.close()
 	game := set.String("game", "", "game identifier")
 	if err := parseNoPositionals(set, args); err != nil {
 		return err
@@ -327,6 +383,10 @@ func runResign(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 	record, err := application.Resign(ctx, workspace, key, *game, common.idem)
+	if confirmation := common.confirm(ctx); confirmation != nil {
+		return confirmation
+	}
+
 	if err != nil {
 		return err
 	}
@@ -341,7 +401,7 @@ func runBoard(ctx context.Context, args []string, stdout io.Writer) error {
 	if err := parseNoPositionals(set, args); err != nil {
 		return err
 	}
-	_, projection, err := application.OpenProjection(ctx, common.repo)
+	_, projection, err := readConfirmed(ctx, common.repo)
 	if err != nil {
 		return err
 	}
@@ -363,9 +423,11 @@ func runServe(ctx context.Context, args []string, stdout io.Writer) error {
 	if !validLoopbackListen(*listen) {
 		return errors.New("serve listen address must use localhost or a loopback IP")
 	}
-	if _, _, err := application.OpenProjection(ctx, common.repo); err != nil {
+	repository, err := openChessRepository(ctx, common.repo)
+	if err != nil {
 		return fmt.Errorf("open chess repository %q: %w", common.repo, err)
 	}
+	defer repository.Close()
 	identityConfig, err := identityHTTPConfigFromEnvironment()
 	if err != nil {
 		return err
@@ -374,7 +436,10 @@ func runServe(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return errors.New("live runtime is unavailable")
 	}
-	server := newChessHTTPServer(*listen, newReadHandlerWithIdentity(ctx, common.repo, runtime, identityConfig))
+	server := newChessHTTPServer(*listen, newReadHandlerWithIdentity(ctx, common.repo, runtime, identityConfig, repository))
+	shutdown, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() { <-shutdown.Done(); server.Close() }()
 	fmt.Fprintln(stdout, "http://"+*listen)
 	return server.ListenAndServe()
 }
@@ -427,6 +492,7 @@ func runMCP(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	set := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
 	common := addCommon(set, true)
+	defer common.close()
 	if err := parseNoPositionals(set, args); err != nil {
 		return err
 	}
@@ -532,7 +598,7 @@ func callTool(ctx context.Context, common *commonFlags, params callParams) (any,
 		if err := decodeArguments(params.Arguments, &arguments); err != nil {
 			return nil, err
 		}
-		_, projection, err := application.OpenProjection(ctx, common.repo)
+		_, projection, err := readConfirmed(ctx, common.repo)
 		if err != nil {
 			return nil, err
 		}
@@ -555,7 +621,7 @@ func callTool(ctx context.Context, common *commonFlags, params callParams) (any,
 		if arguments.Game == "" {
 			return nil, errors.New("game must be a non-empty string")
 		}
-		_, projection, err := application.OpenProjection(ctx, common.repo)
+		_, projection, err := readConfirmed(ctx, common.repo)
 		if err != nil {
 			return nil, err
 		}
@@ -575,7 +641,7 @@ func callTool(ctx context.Context, common *commonFlags, params callParams) (any,
 		if arguments.Game == "" || arguments.From == "" {
 			return nil, errors.New("game and from must be non-empty strings")
 		}
-		_, projection, err := application.OpenProjection(ctx, common.repo)
+		_, projection, err := readConfirmed(ctx, common.repo)
 		if err != nil {
 			return nil, err
 		}
@@ -598,7 +664,7 @@ func callTool(ctx context.Context, common *commonFlags, params callParams) (any,
 		if arguments.Limit != nil {
 			limit = *arguments.Limit
 		}
-		workspace, err := host.Open(ctx, common.repo, application.Application)
+		workspace, _, err := readConfirmed(ctx, common.repo)
 		if err != nil {
 			return nil, err
 		}
@@ -693,6 +759,10 @@ func callTool(ctx context.Context, common *commonFlags, params callParams) (any,
 	if err != nil {
 		return nil, err
 	}
+	if err := common.confirm(ctx); err != nil {
+		return nil, err
+	}
+
 	if identityMutation {
 		return identityActionResult(application.IdentityOutcome(ctx, workspace, record)), nil
 	}
@@ -729,7 +799,7 @@ func decodeArguments(data json.RawMessage, target any) error {
 	return nil
 }
 
-func actionResult(ctx context.Context, workspace *host.Workspace, record host.Record) (map[string]any, error) {
+func actionResult(ctx context.Context, workspace application.RecordReader, record host.Record) (map[string]any, error) {
 	effective, found, reason, err := application.Decision(ctx, workspace, record.ID)
 	if err != nil {
 		return nil, fmt.Errorf("record %s was durably appended, but its decision could not be read: %w", record.ID, err)
@@ -765,7 +835,7 @@ func strictJSON(data []byte, target any) error {
 }
 
 func gitCommonDir(ctx context.Context, repo string) (string, error) {
-	command := exec.CommandContext(ctx, "git", "-C", repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	command := chessGitCommand(ctx, "-C", repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("locate Git directory: %w: %s", err, strings.TrimSpace(string(output)))

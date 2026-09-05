@@ -1,0 +1,9 @@
+.git
+chess
+node_modules
+**/node_modules
+*.key
+*.pem
+*.bundle
+.env
+.env.*

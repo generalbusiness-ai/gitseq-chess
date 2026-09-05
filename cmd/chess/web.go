@@ -75,10 +75,14 @@ func newReadHandlerWithLive(ctx context.Context, repo string, runtime *chessLive
 	return newReadHandlerWithIdentity(ctx, repo, runtime, identityHTTPConfig{})
 }
 
-func newReadHandlerWithIdentity(_ context.Context, repo string, runtime *chessLive, identityConfig identityHTTPConfig) http.Handler {
+func newReadHandlerWithIdentity(_ context.Context, repo string, runtime *chessLive, identityConfig identityHTTPConfig, owned ...*chessRepository) http.Handler {
 	mux := http.NewServeMux()
+	open := localRepositoryOpener(repo)
+	if len(owned) > 0 {
+		open = owned[0].openView
+	}
 	read := projectionReader(func(requestContext context.Context) (application.Projection, error) {
-		_, projection, err := application.OpenProjection(requestContext, repo)
+		_, projection, err := open(requestContext)
 		return projection, err
 	})
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, request *http.Request) {
@@ -209,8 +213,12 @@ func newReadHandlerWithIdentity(_ context.Context, repo string, runtime *chessLi
 		serveJSON(w, map[string]any{"destinations": selection.Destinations, "reason": selection.Reason, "head": projection.Head})
 	})
 	runtime.register(mux, read)
-	newIdentityHTTP(repo, identityConfig).register(mux)
-	newGameActionsHTTP(repo).register(mux)
+	identities := newIdentityHTTP(repo, identityConfig)
+	identities.open = open
+	identities.register(mux)
+	actions := newGameActionsHTTP(repo)
+	actions.open = open
+	actions.register(mux)
 	return securityHeaders(rejectLiveQueries(trustedLiveHost(mux)))
 }
 

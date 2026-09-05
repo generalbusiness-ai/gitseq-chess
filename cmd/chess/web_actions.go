@@ -44,13 +44,14 @@ type gameActionDraft struct {
 
 type gameActionsHTTP struct {
 	repo   string
+	open   repositoryOpener
 	mu     sync.Mutex
 	now    func() time.Time
 	drafts map[string]*gameActionDraft
 }
 
 func newGameActionsHTTP(repo string) *gameActionsHTTP {
-	return &gameActionsHTTP{repo: repo, now: time.Now, drafts: make(map[string]*gameActionDraft)}
+	return &gameActionsHTTP{repo: repo, open: localRepositoryOpener(repo), now: time.Now, drafts: make(map[string]*gameActionDraft)}
 }
 
 func (s *gameActionsHTTP) register(mux *http.ServeMux) {
@@ -90,7 +91,7 @@ func (s *gameActionsHTTP) prepare(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "game action service is busy", 429)
 		return
 	}
-	workspace, projection, err := application.OpenProjection(r.Context(), s.repo)
+	workspace, projection, err := s.open(r.Context())
 	if err != nil {
 		http.Error(w, "repository is unavailable", 503)
 		return
@@ -165,7 +166,7 @@ func (s *gameActionsHTTP) submit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "retry must carry the original signature", 400)
 		return
 	}
-	workspace, _, err := application.OpenProjection(r.Context(), s.repo)
+	workspace, _, err := s.open(r.Context())
 	if err != nil {
 		http.Error(w, "repository is unavailable; retry the same signed draft", 503)
 		return
