@@ -41,8 +41,11 @@ git -C game-data config --local credential.helper /forge-auth/helper
 All four `chess.*` values are required together. An incomplete configuration,
 multiple values or different push destination refuses instead of falling back
 to local writes. They live in the Git common directory, so linked worktrees
-share the policy. Inherited `GIT_*` settings are ignored, including repository
-and configuration overrides. Use on-disk Git/SSH configuration and, where
+share the policy. Chess refuses inherited `GIT_*` settings before entering the
+host or using custody, including repository, object and configuration overrides.
+Unset them before launching Chess. This also applies to native commands and
+read-only CLI/MCP operations. It does not change the process environment around
+concurrent requests. Use on-disk Git/SSH configuration and, where
 needed, an explicitly mounted SSH agent for transport.
 
 ## Build and run
@@ -130,7 +133,7 @@ death between append and push, restart and rollback refusal, failed pushes,
 lost responses, last-attempt confirmation and temporary ancestry-check
 failures. Pending board, identity and live-seat reads remain on the confirmed
 prefix. Separate omission mutants must fail when early acknowledgment,
-pending-head reads, writer locking or Git-environment filtering is removed.
+pending-head reads, writer locking or the Git-environment boundary is removed.
 
 Linux browser acceptance uses two isolated Chromium contexts, the actual
 container service and an authenticated loopback Git HTTP fixture. It plays to

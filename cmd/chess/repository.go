@@ -29,6 +29,18 @@ func chessGitCommand(ctx context.Context, args ...string) *exec.Cmd {
 	return cmd
 }
 
+// The pinned host inherits its process environment when it opens Git stores.
+// Refuse overrides before entering either host or transport code: changing the
+// global environment around a host call would race concurrent HTTP/MCP work.
+func requireExplicitGitEnvironment() error {
+	for _, value := range os.Environ() {
+		if strings.HasPrefix(value, "GIT_") {
+			return errors.New("unset inherited GIT_* variables before running Chess; repository and configuration must be explicit")
+		}
+	}
+	return nil
+}
+
 var errDeliveryPending = errors.New("delivery is pending; no new durable action is accepted")
 
 // The local Git configuration is shared by every linked worktree and writer.
@@ -37,6 +49,9 @@ var errDeliveryPending = errors.New("delivery is pending; no new durable action 
 type forgeConfig struct{ remote, ref, genesis, key string }
 
 func loadForgeConfig(ctx context.Context, repo string) (*forgeConfig, error) {
+	if err := requireExplicitGitEnvironment(); err != nil {
+		return nil, err
+	}
 	values := make([]string, 4)
 	for i, name := range []string{"chess.forgeRemote", "chess.forgeRef", "chess.forgeGenesis", "chess.sequencerKey"} {
 		out, err := chessGitCommand(ctx, "-C", repo, "config", "--local", "--get-all", name).Output()
@@ -107,6 +122,9 @@ type chessRepository struct {
 }
 
 func openChessRepository(ctx context.Context, repo string) (_ *chessRepository, resultErr error) {
+	if err := requireExplicitGitEnvironment(); err != nil {
+		return nil, err
+	}
 	owner, err := acquireWriter(ctx, repo)
 	if err != nil {
 		return nil, err

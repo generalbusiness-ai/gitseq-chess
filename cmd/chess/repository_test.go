@@ -474,29 +474,110 @@ func TestWriterOwnershipIsSharedByLinkedWorktrees(t *testing.T) {
 	}
 }
 
-func TestWriterOwnershipAndForgeConfigurationIgnoreAmbientGitOverrides(t *testing.T) {
+func TestForgeHostRefusesAmbientGitOverridesBeforeAppend(t *testing.T) {
 	ctx := context.Background()
-	repo, remote, _, _ := forgeFixture(t)
+	repo, remote, key, _ := forgeFixture(t)
+	// This same-genesis store passes host binding checks, but is independently
+	// owned. The old host path wrote here after locking only repo.
+	owner, err := acquireWriter(ctx, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	cfg, err := loadForgeConfig(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeLocal := forgeGit(t, repo, "rev-parse", cfg.ref)
+	beforeRemote := forgeGit(t, remote, "rev-parse", cfg.ref)
+	overrides := map[string]string{
+		"GIT_DIR": remote, "GIT_COMMON_DIR": remote, "GIT_WORK_TREE": remote,
+		"GIT_OBJECT_DIRECTORY":             filepath.Join(remote, "objects"),
+		"GIT_ALTERNATE_OBJECT_DIRECTORIES": filepath.Join(remote, "objects"),
+		"GIT_CONFIG_COUNT":                 "0", "GIT_CONFIG": filepath.Join(remote, "config"),
+		"GIT_CONFIG_GLOBAL":     filepath.Join(remote, "config"),
+		"GIT_CONFIG_SYSTEM":     filepath.Join(remote, "config"),
+		"GIT_CONFIG_PARAMETERS": "'chess.forgeRemote=other'",
+		"GIT_INDEX_FILE":        filepath.Join(remote, "index"),
+		"GIT_NAMESPACE":         "other", "GIT_SHALLOW_FILE": filepath.Join(remote, "shallow"),
+		"GIT_REPLACE_REF_BASE": "refs/replace/", "GIT_CEILING_DIRECTORIES": remote,
+	}
+	for name, value := range overrides {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, value)
+			s, err := openChessRepository(ctx, repo)
+			if err == nil {
+				defer s.Close()
+				// Exercise the real signed append if the boundary is accidentally removed.
+				_, appendErr := s.appendSigned(ctx, forgeCreate(t, s, key, "ambient-host"))
+				t.Fatalf("ambient override reached host and append: %v", appendErr)
+			}
+			if !strings.Contains(err.Error(), "unset inherited GIT_*") {
+				t.Fatalf("wrong refusal: %v", err)
+			}
+			if _, _, err := readConfirmed(ctx, repo); err == nil {
+				t.Fatal("ambient read reached host")
+			}
+			if _, _, err := localRepositoryOpener(repo)(ctx); err == nil {
+				t.Fatal("ambient local open reached host")
+			}
+		})
+	}
+	if got := forgeGit(t, repo, "rev-parse", cfg.ref); got != beforeLocal {
+		t.Fatal("refused input changed local store")
+	}
+	if got := forgeGit(t, remote, "rev-parse", cfg.ref); got != beforeRemote {
+		t.Fatal("refused input changed owned unrelated store")
+	}
+	if err := owner.Close(); err != nil {
+		t.Fatal(err)
+	}
 	s, err := openChessRepository(ctx, repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("GIT_DIR", remote)
-	t.Setenv("GIT_CONFIG_COUNT", "1")
-	t.Setenv("GIT_CONFIG_KEY_0", "chess.forgeRemote")
-	t.Setenv("GIT_CONFIG_VALUE_0", "missing")
-	if other, err := openChessRepository(ctx, repo); err == nil {
-		other.Close()
-		t.Fatal("ambient Git directory bypassed held ownership")
-	}
-	if err := s.Close(); err != nil {
+	defer s.Close()
+	record, err := s.appendSigned(ctx, forgeCreate(t, s, key, "explicit-host"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	s, err = openChessRepository(ctx, repo)
-	if err != nil {
-		t.Fatalf("ambient configuration changed explicit forge attachment: %v", err)
+	after := forgeGit(t, repo, "rev-parse", cfg.ref)
+	if after == beforeLocal || after != s.confirmed.Head || !strings.HasSuffix(record.ID, after) {
+		t.Fatalf("successful explicit append missed local store: record=%s local=%s confirmed=%s", record.ID, after, s.confirmed.Head)
 	}
-	defer s.Close()
+}
+
+func TestChessProcessRefusesAmbientGitBeforeCustody(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	repo, remote, _, _ := forgeFixture(t)
+	owner, err := acquireWriter(ctx, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	cfg, err := loadForgeConfig(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeLocal := forgeGit(t, repo, "rev-parse", cfg.ref)
+	beforeRemote := forgeGit(t, remote, "rev-parse", cfg.ref)
+	for _, verb := range []string{"init", "rebind", "serve", "create", "join", "move", "resign", "board", "mcp"} {
+		t.Run(verb, func(t *testing.T) {
+			command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestServeCommandHelper$", "--", verb, "--repo", repo)
+			command.Env = append(os.Environ(), "CHESS_SERVE_COMMAND_HELPER=1", "GIT_DIR="+remote)
+			output, err := command.CombinedOutput()
+			if err == nil || !strings.Contains(string(output), "unset inherited GIT_*") {
+				t.Fatalf("process missed environment boundary: %v %s", err, output)
+			}
+		})
+	}
+	if got := forgeGit(t, repo, "rev-parse", cfg.ref); got != beforeLocal {
+		t.Fatal("process changed local store")
+	}
+	if got := forgeGit(t, remote, "rev-parse", cfg.ref); got != beforeRemote {
+		t.Fatal("process changed owned unrelated store")
+	}
 }
 
 func TestForgeRejectsUnexpectedBindingBeforeCustody(t *testing.T) {

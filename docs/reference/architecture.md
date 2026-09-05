@@ -80,8 +80,10 @@ queries use the persisted confirmed prefix without taking writer ownership.
 
 Forge mode requires one configured remote with matching fetch/push
 destinations, exact sequence ref and genesis, and a private sequencer key
-path. Inherited Git environment overrides cannot redirect the repository,
-configuration or ownership guard. Startup verifies the signed sequence and
+path. Process dispatch and repository entry points refuse inherited `GIT_*`
+settings before host access or custody, so the pinned host, transport and
+ownership guard select the same explicit repository. No per-request global
+environment mutation is used. Startup verifies the signed sequence and
 current binding before append can consume sequencer custody. It retains
 pending history, refuses rollback/divergence, and never silently initializes
 or rebinds a forge repository. Native mode retains local durability.

@@ -35,6 +35,9 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdout io.Writer, stdin io.Reader) error {
+	if err := requireExplicitGitEnvironment(); err != nil {
+		return err
+	}
 	if len(args) == 0 {
 		return usageError()
 	}
