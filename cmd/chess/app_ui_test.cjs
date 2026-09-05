@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const {
+  checkedGameDraft,
   actorLabel,
   createActorLabel,
   promptedDisplayName,
@@ -165,4 +166,18 @@ test("both browser views state tab-key loss and expose both identity axes", () =
     assert.match(html, /id="identity-verification"/);
     assert.match(html, /unanchored seat cannot be recovered/i);
   }
+});
+
+
+test("game signing checks every echoed field and refuses expired or changed drafts", () => {
+  const expected = {action:"move",game:"game",move:"e2e4",secret:"",predecessor:"previous",actor:"actor"};
+  const prepared = {draft:"a".repeat(48),echo:{...expected},signing_bytes:"AQID",expires:200};
+  assert.equal(checkedGameDraft(prepared,expected,100),"AQID");
+  for (const field of Object.keys(expected)) {
+    assert.throws(() => checkedGameDraft({...prepared,echo:{...expected,[field]:"changed"}},expected,100));
+  }
+  assert.throws(() => checkedGameDraft({...prepared,echo:{...expected,extra:"ignored"}},expected,100));
+  assert.throws(() => checkedGameDraft(prepared,expected,200));
+  assert.throws(() => checkedGameDraft({...prepared,draft:"unknown"},expected,100));
+  assert.throws(() => checkedGameDraft({...prepared,signing_bytes:"x".repeat(65537)},expected,100));
 });

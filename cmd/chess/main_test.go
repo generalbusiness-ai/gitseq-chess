@@ -940,7 +940,7 @@ func TestEmbeddedUIRendersTheExactFoldedPositionAndSeats(t *testing.T) {
 		projection.Head, game.ID, game.White, game.Black, game.FEN,
 		`data-square="e4" title="e4" aria-label="white pawn at e4"><span aria-hidden="true">♙</span>`,
 		`data-square="e2" title="e2" aria-label="empty at e2"><span aria-hidden="true"></span>`,
-		"read-only board", "Opening lesson", ">Lobby</a>", "No chat messages yet.",
+		"Sign and submit", "Opening lesson", ">Lobby</a>", "No chat messages yet.",
 		"Refused recorded acts", "actor does not hold the side to move",
 	} {
 		if !strings.Contains(page, want) {

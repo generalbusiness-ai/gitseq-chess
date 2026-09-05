@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/assets/app.css">
   <script src="/assets/app.js" defer></script>
 </head>
-<body data-head="{{.Head}}" data-view="game" data-game="{{.Game.ID}}">
+<body data-head="{{.Head}}" data-view="game" data-game="{{.Game.ID}}" data-predecessor="{{.Game.LastMove}}">
   <header class="masthead">
     <a class="wordmark" href="/">durable games: chess</a>
     <nav class="toolbar" aria-label="Site links">
@@ -21,8 +21,8 @@
     <section class="game-summary">
       <p class="breadcrumb"><a href="/">Lobby</a> / {{if .Game.Name}}{{.Game.Name}}{{else}}game{{end}}</p>
       <h1>{{if .Game.Name}}{{.Game.Name}}{{else}}Game{{end}}</h1>
-      <p class="game-status">{{.Game.Status}}{{if .Game.Turn}} · {{.Game.Turn}} to move{{end}}</p>
-      {{if .Game.Outcome}}<p class="outcome">{{.Game.Outcome}} by {{.Game.Method}}</p>{{end}}
+      <p class="game-status">{{.Game.Status}}{{if .Game.Turn}} · {{if eq .Game.Turn "w"}}white{{else}}black{{end}} to move{{end}}</p>
+      <p class="outcome" {{if not .Game.Outcome}}hidden{{end}}>{{if .Game.Outcome}}{{.Game.Outcome}} by {{.Game.Method}}{{end}}</p>
       <dl class="seats">
         <div><dt>White</dt><dd>{{if .Game.White}}<code>{{.Game.White}}</code>{{else if .Game.AdmissionOpen}}Open{{else}}Restricted{{end}}</dd></div>
         <div><dt>Black</dt><dd>{{if .Game.Black}}<code>{{.Game.Black}}</code>{{else if .Game.AdmissionOpen}}Open{{else}}Restricted{{end}}</dd></div>
@@ -34,22 +34,32 @@
           {{range .Squares}}<button class="square {{if .Dark}}dark{{else}}light{{end}}" type="button" data-square="{{.Name}}" title="{{.Name}}" aria-label="{{.Label}}"><span aria-hidden="true">{{.Piece}}</span></button>{{end}}
         </div>
         <p id="move-help" class="move-help" aria-live="polite">Select a piece to see its valid destinations.</p>
-        <p class="read-only">This is a read-only board showing only durable moves. Use the command line or MCP adapter to submit a signed chess act.</p>
+        <div class="game-actions">
+          <button id="join-game" type="button" {{if and .Game.White .Game.Black}}hidden{{end}}>Join game</button>
+          <label>Promote to <select id="promotion"><option value="q">Queen</option><option value="r">Rook</option><option value="b">Bishop</option><option value="n">Knight</option></select></label>
+        </div>
+        <section id="action-confirmation" class="action-confirmation" hidden aria-label="Confirm signed game action">
+          <p id="action-description"></p>
+          <p id="action-key-warning"></p>
+          <button id="sign-game-action" type="button">Sign and submit</button>
+          <button id="cancel-game-action" type="button">Cancel</button>
+        </section>
+        <p>Choose a move, check its confirmation, then sign with this tab's key. The board changes only after the signed act is recorded and accepted.</p>
         <div class="position-meta">
-          <span>Moves {{.Game.Moves}}</span>
-          {{if .Game.LastMoveUCI}}<span>Last move <code>{{.Game.LastMoveUCI}}</code></span>{{end}}
-          {{if .Game.DrawOffer}}<span>Draw offered by <code>{{.Game.OfferedBy}}</code></span>{{end}}
+          <span id="move-count">Moves {{.Game.Moves}}</span>
+          <span id="last-move">{{if .Game.LastMoveUCI}}Last move {{.Game.LastMoveUCI}}{{end}}</span>
+          <span id="draw-offer">{{if .Game.DrawOffer}}Draw offered by {{.Game.OfferedBy}}{{end}}</span>
         </div>
         <details>
           <summary>Durable position</summary>
           <code class="fen">{{.Game.FEN}}</code>
           <code class="game-id">{{.Game.ID}}</code>
         </details>
-      {{if .Refused}}<section class="game-refusals" aria-labelledby="refusals-title">
+      <section {{if not .Refused}}hidden{{end}} class="game-refusals" aria-labelledby="refusals-title">
         <h2 id="refusals-title">Refused recorded acts</h2>
         <p>The durable board did not change for these acts. A provisional move snaps back to this position.</p>
         <ol>{{range .Refused}}<li><strong>{{.Reason}}</strong> <code>{{.Record}}</code></li>{{end}}</ol>
-      </section>{{end}}
+      </section>
       </section>
       <aside class="right-rail">
       <section class="identity-panel" aria-labelledby="identity-heading">
@@ -103,8 +113,8 @@
   <dialog class="help-dialog" data-help-dialog aria-labelledby="help-title">
     <form method="dialog"><button class="dialog-close" aria-label="Close help">×</button></form>
     <h2 id="help-title">How to play</h2>
-    <p>Watch the durable position here, and use the command line or gitseq-chess MCP server for signed game actions. The identity panel can durably anchor this tab's public key; presence, motion previews, and chat remain temporary.</p>
-    {{if and .Game.AdmissionOpen (or (not .Game.White) (not .Game.Black))}}<p class="join-instruction">This game has an open seat. Tell your agent: “Use the gitseq-chess MCP <code>join</code> tool to join game <code>{{.Game.ID}}</code>.”</p>{{end}}
+    <p>Join an open or invited game with this tab key. Select a piece and destination, check the action, then sign and submit. Reloading or closing this tab loses its key. The identity panel can durably anchor this tab's public key; presence, motion previews, and chat remain temporary.</p>
+    {{if and .Game.AdmissionOpen (or (not .Game.White) (not .Game.Black))}}<p class="join-instruction">This game has an open seat. Choose Join game, or use the gitseq-chess MCP <code>join</code> tool for <code>{{.Game.ID}}</code>.</p>{{end}}
   </dialog>
 </body>
 </html>

@@ -102,6 +102,15 @@ h1 { max-width: 16ch; margin: .4rem 0 1rem; font-family: ui-serif, Georgia, seri
 .chat-form div { display: flex; gap: .5rem; }
 .chat-form input { min-width: 0; flex: 1; border: 1px solid #afa998; border-radius: 2rem; padding: .65rem .85rem; background: #fffdf7; }
 .board-panel { width: 100%; }
+.game-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; margin: 1rem 0; }
+.game-actions select { border: 1px solid #afa998; border-radius: .4rem; padding: .5rem; background: #fffdf7; font: inherit; }
+.game-actions button, .action-confirmation button { border: 0; border-radius: 2rem; padding: .65rem 1rem; background: #202b25; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+.action-confirmation { margin: 1rem 0; padding: 1rem; border: 1px solid #afa998; border-radius: .75rem; background: #fffdf7; overflow-wrap: anywhere; }
+.action-confirmation p { line-height: 1.45; }
+.action-confirmation p:first-child { margin-top: 0; font-weight: 700; }
+.action-confirmation button:disabled { opacity: .55; cursor: default; }
+#cancel-game-action { background: #e6e2dc; color: #24221d; }
+.move-help, .game-refusals { overflow-wrap: anywhere; }
 .board { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); grid-template-rows: repeat(8, minmax(0, 1fr)); overflow: hidden; width: 100%; aspect-ratio: 1; border: .5rem solid #202b25; border-radius: .35rem; box-shadow: 0 1rem 2.5rem rgb(31 42 35 / 18%); }
 .square { display: grid; place-items: center; min-width: 0; min-height: 0; width: 100%; aspect-ratio: 1; border: 0; padding: 0; color: #171b18; font-size: clamp(1.5rem, 5vw, 3.8rem); line-height: 1; cursor: pointer; }
 .square.light { background: #e8ddc2; }
