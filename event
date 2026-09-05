@@ -1,1 +1,1 @@
-{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:a38747afb1eac3d5e5fe4de8f42842bd67f3170a","text":"Merge retired a covered predecessor; the successor is at cmd/chess/web_identity_test.go."}
+{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:ab9f2f4f9295d922d3685d3bcc96248acc36f2f0","text":"Merge retired a covered predecessor; the successor is at cmd/chess/web.go."}
