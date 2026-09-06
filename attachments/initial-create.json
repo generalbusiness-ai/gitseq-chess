@@ -1,7 +1,0 @@
-{
-  "genesis": "git:sha1:59131fe075fe4c35b087f7db695df30f84e05bd9",
-  "record": "git:sha1:59131fe075fe4c35b087f7db695df30f84e05bd9#git:sha1:afe92088893e370c620feec1ff1780f2ea20966b",
-  "effective": true,
-  "head": "afe92088893e370c620feec1ff1780f2ea20966b",
-  "depth": 2
-}
