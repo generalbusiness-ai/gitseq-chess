@@ -1,1 +1,1 @@
-{"kind":"artifact","text":"Merge published the current artifact at docs/reference/architecture.md","body":{"commit":"b97c6a82ef7e3618721696f5a69efef13da10a79","path":"docs/reference/architecture.md"}}
+{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:1281e4225278b85bee8bd88894eae98a68b2d39b","text":"Merge retired a covered predecessor; the successor is at cmd/chess/repository.go."}
