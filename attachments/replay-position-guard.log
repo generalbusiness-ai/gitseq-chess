@@ -1,6 +1,0 @@
-=== RUN   TestAgentProcessesPlayAndRecoverAcrossServiceAndAdapterRestart
-    agent_transport_test.go:243: automatic exact replay: []main.agentResult{main.agentResult{Genesis:"git:sha1:5ea1ed362ecfabb1e20e8e236bba5fae7e1bc040", Record:"git:sha1:5ea1ed362ecfabb1e20e8e236bba5fae7e1bc040#git:sha1:78830fb4afba7db57ba059c45aaf63a4f41784e6", Effective:(*bool)(0xc0002b86ff), Reason:"", Head:"78830fb4afba7db57ba059c45aaf63a4f41784e6", Depth:5}}
---- FAIL: TestAgentProcessesPlayAndRecoverAcrossServiceAndAdapterRestart (8.50s)
-FAIL
-FAIL	github.com/generalbusiness-ai/gitseq-chess/cmd/chess	8.827s
-FAIL

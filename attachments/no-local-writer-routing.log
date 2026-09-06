@@ -1,6 +1,0 @@
-=== RUN   TestAgentDestinationRefusesFallbackAndUnsafeOrigins
-    agent_refusal_test.go:53: create fell back from unavailable service: <nil> {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"effective\":true,\"record\":\"git:sha1:56e4136a11764853e516d3314650b30eae19b545#git:sha1:77511058195174b5870286cbfe9ce63a2eba8f32\"}","type":"text"}],"structuredContent":{"effective":true,"record":"git:sha1:56e4136a11764853e516d3314650b30eae19b545#git:sha1:77511058195174b5870286cbfe9ce63a2eba8f32"}}}
---- FAIL: TestAgentDestinationRefusesFallbackAndUnsafeOrigins (2.98s)
-FAIL
-FAIL	github.com/generalbusiness-ai/gitseq-chess/cmd/chess	3.314s
-FAIL
