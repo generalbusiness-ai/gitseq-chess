@@ -1,1 +1,1 @@
-{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:8bd46b55ffa46c688002af788cde71bc872184e4","text":"Merge retired a covered predecessor; the successor is at cmd/chess/agent_lock_unsupported.go."}
+{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:93714c7967643df21d5f13774e7f8856062b1af5","text":"Merge retired a covered predecessor; the successor is at cmd/chess/agent_client.go."}
