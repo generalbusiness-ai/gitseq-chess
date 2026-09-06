@@ -1,0 +1,19 @@
+{
+  "scratch": "/var/folders/2x/wylr59t17ds36l1l7ng25y7w0000gn/T/chess-agent-omissions-3k24majd",
+  "controls": [
+    {
+      "control": "replay-position-guard",
+      "expected_test_failure_observed": true,
+      "exit": 1,
+      "test": "TestAgentProcessesPlayAndRecoverAcrossServiceAndAdapterRestart",
+      "log": "/var/folders/2x/wylr59t17ds36l1l7ng25y7w0000gn/T/chess-agent-omissions-3k24majd/replay-position-guard/test.log"
+    },
+    {
+      "control": "no-local-writer-routing",
+      "expected_test_failure_observed": true,
+      "exit": 1,
+      "test": "TestAgentDestinationRefusesFallbackAndUnsafeOrigins",
+      "log": "/var/folders/2x/wylr59t17ds36l1l7ng25y7w0000gn/T/chess-agent-omissions-3k24majd/no-local-writer-routing/test.log"
+    }
+  ]
+}
