@@ -1,1 +1,1 @@
-{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:e69cff4c1ec5685b9e27402ec56bfa0efe49d7b8","text":"Merge retired a covered predecessor; the successor is at docs/local-agent.md."}
+{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:e6b6adaa6e46fc69ecbe309e01eb1eaad97482ea","text":"Merge retired a covered predecessor; the successor is at cmd/chess/agent_lock_unix.go."}
