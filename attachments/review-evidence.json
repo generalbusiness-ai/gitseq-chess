@@ -1,0 +1,53 @@
+{
+  "head": "fc3fa1f50edb10efd631d0708309d1839c06a7da",
+  "scope": "All 18 changed paths, exact manifest and selected implementation report verified against main 7ba6463a6e4d2ce2f7e2be87464ac44ad1f4f519.",
+  "selected_report": "git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:fd80931294c7e71b23aa125ff25d94b9636003ab",
+  "artifacts": {
+    "chess.go": "git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:664eca017598694524e74b00eb5571de4b881197",
+    "cmd/chess/agent_client.go": "git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:93714c7967643df21d5f13774e7f8856062b1af5",
+    "cmd/chess/agent_commands.go": "git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:541afeafbee79656c0bdbdb6505cbe8009c2a127",
+    "cmd/chess/agent_lock_unix.go": "git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:e6b6adaa6e46fc69ecbe309e01eb1eaad97482ea",
+    "cmd/chess/agent_lock_unsupported.go": "git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:8bd46b55ffa46c688002af788cde71bc872184e4",
+    "cmd/chess/agent_pending.go": "git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:c7818c50e02b2230805ca0e2c4d4efac39b14e90",
+    "cmd/chess/agent_refusal_test.go": "git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:3e6e2536feac4f9b567856abf98237d6588a7310",
+    "cmd/chess/agent_transport_test.go": "git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:1e43e30471e984ca8caa420e4f170e99def2c314",
+    "cmd/chess/main.go": "git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:f33a5404e537b4b69f455bb1ecca49f4a9de8459",
+    "cmd/chess/main_test.go": "git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:353dd6fc483e4e48e4f99d466cc4cf444750edb6",
+    "cmd/chess/repository.go": "git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:d966458aea07f225a955a1f4f7cd9baf1d912952",
+    "cmd/chess/service_actions.go": "git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:7598ae6d46ecfa9f0414b98582816dfe3b903b20",
+    "cmd/chess/web.go": "git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:4c1da32cf7bdf32c1da61bfedab5514cbff24175",
+    "cmd/chess/web_actions.go": "git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:613eb5a15b30847fedf2048c5c0fc267ecb196b5",
+    "README.md": "git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:15f8e35689ff7ebeab796b8ca4249ae29305693d",
+    "docs/forge-service.md": "git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:487eeb0bd714abf92d15f811bef8d9dbbd46147a",
+    "docs/local-agent.md": "git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:e69cff4c1ec5685b9e27402ec56bfa0efe49d7b8",
+    "docs/reference/architecture.md": "git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:fd80931294c7e71b23aa125ff25d94b9636003ab"
+  },
+  "authority": "Ordinary proposal #735 effectively ratified by Hugh #736; independently reviewed design #742, delivered at 7416d8da with fresh successor f6289c65; implementation request #748 remains effective and fresh. No authority-bearing request shortcut used.",
+  "tests": {
+    "race": "PASS: root package 24.615s; cmd/chess 114.847s; go test -race -count=1 ./... with inherited GIT_* removed",
+    "vet": "passed",
+    "linux_amd64_build": "passed",
+    "diff_check": "passed",
+    "omissions": {
+      "scratch": "/var/folders/2x/wylr59t17ds36l1l7ng25y7w0000gn/T/chess-agent-omissions-ef2f1xun",
+      "controls": [
+        {
+          "control": "replay-position-guard",
+          "expected_test_failure_observed": true,
+          "exit": 1,
+          "test": "TestAgentProcessesPlayAndRecoverAcrossServiceAndAdapterRestart",
+          "log": "/var/folders/2x/wylr59t17ds36l1l7ng25y7w0000gn/T/chess-agent-omissions-ef2f1xun/replay-position-guard/test.log"
+        },
+        {
+          "control": "no-local-writer-routing",
+          "expected_test_failure_observed": true,
+          "exit": 1,
+          "test": "TestAgentDestinationRefusesFallbackAndUnsafeOrigins",
+          "log": "/var/folders/2x/wylr59t17ds36l1l7ng25y7w0000gn/T/chess-agent-omissions-ef2f1xun/no-local-writer-routing/test.log"
+        }
+      ]
+    }
+  },
+  "limits": "Automated process transport evidence only; actual browser-human plus own-agent acceptance remains open under #720. Local trusted service, not public exposure or remote authentication.",
+  "environment": "Removed inherited GIT_* for executable test processes as required by Chess. Initial unsanitized attempt refused GIT_PAGER; initial overlays used a symlink path and did not apply, then were resolved to /private and independently produced intended race-test failures."
+}
