@@ -1,0 +1,19 @@
+{
+  "source": "b97c6a82ef7e3618721696f5a69efef13da10a79",
+  "browser": "Native Google Chrome via CUA, macOS, 125% inherited zoom; actual screenshots in session, no screenshot files claimed",
+  "genesis": "git:sha1:59131fe075fe4c35b087f7db695df30f84e05bd9",
+  "first_game": "git:sha1:59131fe075fe4c35b087f7db695df30f84e05bd9#git:sha1:afe92088893e370c620feec1ff1780f2ea20966b",
+  "rematch": "git:sha1:59131fe075fe4c35b087f7db695df30f84e05bd9#git:sha1:aac54ffb2160dd5ee44a51073fd5e831872cb3d6",
+  "final_head": "eacbe2ca1007ead32e253e377597acd4bf6c6713",
+  "final_depth": 16,
+  "human_driver": "Codex using browser controls as the human tester",
+  "opponent": "Actual Codex choosing and submitting moves via supported server-mode CLI; no separate subagent or simulated engine",
+  "public_exposure": false,
+  "real_identity_accounts_used": false,
+  "source_changed": false,
+  "commands": 16,
+  "node_tests": 15,
+  "go": "go version go1.27.0 darwin/arm64",
+  "node": "v26.8.1",
+  "os": "26.6.2"
+}
