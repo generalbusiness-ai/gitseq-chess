@@ -1,1 +1,1 @@
-{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:c7818c50e02b2230805ca0e2c4d4efac39b14e90","text":"Merge retired a covered predecessor; the successor is at cmd/chess/agent_pending.go."}
+{"target":"git:sha1:1b96687964cbba5a6089c526d7136b32ba9488a5#git:sha1:d8ef5ff816e2254719995a29e2140de49ce770d5","text":"Merge retired a covered predecessor; the successor is at cmd/chess/web.go."}
