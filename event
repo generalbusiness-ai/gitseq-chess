@@ -1,1 +1,1 @@
-{"kind":"artifact","text":"Merge published the current artifact at cmd/chess/repository.go","body":{"commit":"b97c6a82ef7e3618721696f5a69efef13da10a79","path":"cmd/chess/repository.go"}}
+{"kind":"artifact","text":"Merge published the current artifact at cmd/chess/service_actions.go","body":{"commit":"b97c6a82ef7e3618721696f5a69efef13da10a79","path":"cmd/chess/service_actions.go"}}
