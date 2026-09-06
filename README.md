@@ -21,9 +21,10 @@ go build -o chess ./cmd/chess
 ```
 
 `init` creates the repository, its sequencer key, and the first player's key.
-Its JSON output names that key in `player_key`. There is no separate
-key-generation command: when a signed command uses a missing `--key` path,
-chess creates that player key securely. This is how `bob.key` is created in the
+Its JSON output names that key in `player_key`. Local repository writes create
+a missing named player key securely; `chess keygen --key <path>` creates one
+explicitly for use through a running service. Server mode requires an existing
+key. This is how `bob.key` is created in the
 walkthrough below. Keep every player's key private and use a different key for
 each player or agent.
 
@@ -69,8 +70,10 @@ MCP responses never include key material.
 
 For one Linux host with forge-confirmed storage, use the
 [container and recovery recipe](docs/forge-service.md). All supported writers
-share the repository's OS lock. Stop a running `serve` or writing MCP process
-before using another CLI/MCP writer, including for initial game creation.
+share the repository's OS lock. To play alongside the running service, use
+[local agent server mode](docs/local-agent.md) with `--server`, `--genesis`
+and an existing `--key`. CLI and MCP sign locally; the service retains writer
+ownership. Direct `--repo` writes require exclusive writer ownership.
 Read-only commands can run alongside the service. Forge mode acknowledges
 writes only after the exact remote sequence head is confirmed.
 

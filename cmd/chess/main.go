@@ -41,7 +41,12 @@ func run(ctx context.Context, args []string, stdout io.Writer, stdin io.Reader) 
 	if len(args) == 0 {
 		return usageError()
 	}
+	if hasServerFlag(args[1:]) && args[0] != "mcp" {
+		return runAgentCLI(ctx, args[0], args[1:], stdout, stdin)
+	}
 	switch args[0] {
+	case "keygen":
+		return runAgentKey(ctx, args[1:], stdout)
 	case "init":
 		return runInit(ctx, args[1:], stdout)
 	case "rebind":
@@ -66,7 +71,7 @@ func run(ctx context.Context, args []string, stdout io.Writer, stdin io.Reader) 
 }
 
 func usageError() error {
-	return errors.New("usage: chess <init|rebind|serve|create|join|move|board|resign|mcp> [options]")
+	return errors.New("usage: chess <init|keygen|rebind|serve|create|join|move|board|resign|mcp> [options]")
 }
 
 func runInit(ctx context.Context, args []string, stdout io.Writer) error {
@@ -217,6 +222,8 @@ func confirmRebind(stdin io.Reader, stdout io.Writer, outgoing, incoming string)
 }
 
 type commonFlags struct {
+	server     string
+	genesis    string
 	repo       string
 	key        string
 	idem       string
@@ -233,6 +240,8 @@ func (f *commonFlags) confirm(ctx context.Context) error { return f.repository.c
 
 func addCommon(set *flag.FlagSet, write bool) *commonFlags {
 	flags := &commonFlags{}
+	set.StringVar(&flags.server, "server", "", "explicit local Chess service origin")
+	set.StringVar(&flags.genesis, "genesis", "", "expected canonical genesis")
 	set.StringVar(&flags.repo, "repo", ".", "chess repository")
 	if write {
 		set.StringVar(&flags.key, "key", "", "player private-key file")
@@ -242,6 +251,9 @@ func addCommon(set *flag.FlagSet, write bool) *commonFlags {
 }
 
 func openWriter(ctx context.Context, flags *commonFlags) (*host.Workspace, ed25519.PrivateKey, error) {
+	if flags.server != "" {
+		return nil, nil, errors.New("server mode cannot open a local writer")
+	}
 	if err := requireKeyCustodyPlatform(); err != nil {
 		return nil, nil, err
 	}
@@ -499,6 +511,18 @@ func runMCP(ctx context.Context, args []string, stdin io.Reader, stdout io.Write
 	if err := parseNoPositionals(set, args); err != nil {
 		return err
 	}
+	if common.server != "" {
+		client, err := newAgentClient(common)
+		if err != nil {
+			return err
+		}
+		client.close()
+		custody, err := openAgentCustody(ctx, common.key)
+		if err != nil {
+			return err
+		}
+		custody.Close()
+	}
 	scanner := bufio.NewScanner(stdin)
 	scanner.Buffer(make([]byte, 4096), maxMCPMessage)
 	encoder := json.NewEncoder(stdout)
@@ -524,6 +548,31 @@ func parseNoPositionals(set *flag.FlagSet, arguments []string) error {
 	if err := set.Parse(arguments); err != nil {
 		return err
 	}
+	if server := set.Lookup("server"); server != nil {
+		explicitRepo := false
+		explicitServer := false
+		set.Visit(func(f *flag.Flag) {
+			if f.Name == "server" {
+				explicitServer = true
+			}
+			if f.Name == "repo" {
+				explicitRepo = true
+			}
+		})
+		if explicitServer && server.Value.String() == "" {
+			return errors.New("--server must name a loopback service")
+		}
+		if server.Value.String() != "" {
+			if explicitRepo {
+				return errors.New("--repo and --server are mutually exclusive")
+			}
+			if _, err := agentServerURL(server.Value.String()); err != nil {
+				return err
+			}
+		} else if set.Lookup("genesis").Value.String() != "" {
+			return errors.New("--genesis requires --server")
+		}
+	}
 	if set.NArg() != 0 {
 		return errors.New("unexpected positional arguments")
 	}
@@ -547,7 +596,11 @@ func handleRPC(ctx context.Context, common *commonFlags, request rpcRequest) (rp
 			"serverInfo":      map[string]string{"name": "gitseq-chess", "version": application.FoldVersion},
 		}
 	case "tools/list":
-		response.Result = map[string]any{"tools": mcpTools()}
+		listed := mcpTools()
+		if common.server != "" {
+			listed = agentMCPTools()
+		}
+		response.Result = map[string]any{"tools": listed}
 	case "tools/call":
 		var params callParams
 		if err := strictJSON(request.Params, &params); err != nil {
@@ -592,6 +645,9 @@ func mcpTools() []map[string]any {
 }
 
 func callTool(ctx context.Context, common *commonFlags, params callParams) (any, error) {
+	if common.server != "" {
+		return callAgentTool(ctx, common, params)
+	}
 	switch params.Name {
 	case "list_games":
 		var arguments struct {

@@ -7,9 +7,9 @@ and its user interfaces, not the host or kernel.
 | Layer | Owner and contract |
 | --- | --- |
 | 1–4: signed records, storage, order and public host | The pinned Gitseq module verifies binding, signatures and ordered records. Chess uses public `host`, `host/identity` and `host/live` APIs. These contracts are unchanged. |
-| 5: application interpretation | `chess.go` encodes chess acts and folds verified records into games. Seat authority uses the shared identity projection. The fold remains pure. `RecordReader` lets decision and identity queries consume a verified prefix without reopening a pending local head. `JoinAct` and `MoveAct` expose the same pure encoders used by CLI/MCP; `MoveAct` takes an explicit predecessor. |
+| 5: application interpretation | `chess.go` encodes chess acts and folds verified records into games. Seat authority uses the shared identity projection. The fold remains pure. `RecordReader` lets decision and identity queries consume a verified prefix without reopening a pending local head. Pure create, join, move, resignation and draw builders expose the same encoders to local and service signing. Move/resignation/draw-offer builders take an explicit predecessor; draw acceptance takes the chosen offer. Schemas and the fold are unchanged. |
 | 6: bounded reads | Projection methods provide games, positions and legal destinations. In forge mode, every board, identity and live-role reader shares one verified forge-confirmed prefix. `GET /v1/board` returns the game, head, server-rendered square data and that game's entries from the projection's bounded refusal tail. The browser draws these values without a second rules engine. |
-| 7: CLI, MCP and local browser | `cmd/chess` owns local key custody, HTTP and UI. The browser now prepares and signs joins and moves. All supported writers share process-lifetime ownership in the real Git common directory. Optional explicit forge configuration makes append success depend on exact remote confirmation, including identity completion. Game rules and identity authority remain unchanged. |
+| 7: CLI, MCP and local browser | `cmd/chess` owns local key custody, HTTP and UI. The browser now prepares and signs joins and moves. All supported writers share process-lifetime ownership in the real Git common directory. Optional explicit forge configuration makes append success depend on exact remote confirmation, including identity completion. Explicit CLI/MCP server mode signs with an existing agent key and delegates sequencing to the owning service. Game rules and identity authority remain unchanged. |
 
 ## Browser actions
 
@@ -109,3 +109,34 @@ refusal and acceptance through the real HTTP handler. Node tests mutate every
 echo field. Browser acceptance additionally exercises a real tab joining,
 retaining its key across an incoming CLI move, signing a move, retrying a
 lost response without another record, and losing authority after key loss.
+
+## Native agent service transport
+
+Layer 7 adds the explicit local transport described in [local agent access](../local-agent.md).
+The service remains the sole writer. The CLI/MCP client accepts only a literal
+loopback HTTP origin and expected canonical genesis, with no proxy, redirect or
+local repository fallback. It signs locally after checking the complete action
+echo and application payload against the chosen action, using the public host
+signing-byte helper. The service remains a trusted intent encoder, including
+its canonical sequence binding; this is not remote-service authentication.
+
+The typed native prepare/submit endpoints reuse layer 5's pure act builders
+and layers 1–4's existing prepare, signature, idempotency and append contracts.
+They admit only Chess game actions. Native replay retains original fields,
+predecessor, retry key and signature independently of browser draft memory.
+It reconstructs bytes without a new-position precheck so accepted retries can
+reach host idempotency after subsequent moves. Reconstruction alone may proceed
+while forge delivery is pending; the existing append path still reconciles
+and confirms exact history before acknowledging it. New preparation preserves
+its position check. Layer 6 reads stay on the confirmed prefix.
+
+One private, bounded attempt per configured key path is atomically published
+and synced before submission. An OS file lock prevents concurrent overwrite;
+an unknown outcome blocks a different mutation. A local public-key pin detects
+replacement between commands without granting identity or seat authority.
+There is no native action queue, generic host append endpoint, new identity
+system or browser key change. The transport reference specifies concrete
+network, payload, retry and custody limits. Native process tests cover a full
+game/rematch, lost acknowledgements, service/adapter restart, changed-board
+replay, forge confirmation, unsafe custody and refusal paths. Actual browser
+acceptance remains a separate open obligation.

@@ -895,15 +895,7 @@ func encode(value any) ([]byte, error) {
 // Create records a new game. creatorColor is white or black. inviteKey and
 // joinSecret are mutually exclusive; leaving both empty creates an open game.
 func Create(ctx context.Context, ws *host.Workspace, signer ed25519.PrivateKey, creatorColor, inviteKey, joinSecret, idempotencyKey string) (host.Record, error) {
-	body, err := createPayload(creatorColor, inviteKey, joinSecret)
-	if err != nil {
-		return host.Record{}, err
-	}
-	payload, err := encode(body)
-	if err != nil {
-		return host.Record{}, err
-	}
-	return ws.Append(ctx, signer, host.Act{Schema: SchemaCreate, Payload: payload, IdempotencyKey: idempotencyKey})
+	return CreateNamed(ctx, ws, signer, "", creatorColor, inviteKey, joinSecret, idempotencyKey)
 }
 
 func createPayload(creatorColor, inviteKey, joinSecret string) (CreatePayload, error) {
@@ -930,27 +922,31 @@ func createPayload(creatorColor, inviteKey, joinSecret string) (CreatePayload, e
 // CreateNamed records a named game in one act. Keeping the combined vocabulary
 // separate preserves the exact bytes and judgments of create@0 and name@0.
 func CreateNamed(ctx context.Context, ws *host.Workspace, signer ed25519.PrivateKey, name, creatorColor, inviteKey, joinSecret, idempotencyKey string) (host.Record, error) {
-	if name == "" {
-		return Create(ctx, ws, signer, creatorColor, inviteKey, joinSecret, idempotencyKey)
+	act, err := CreateNamedAct(name, creatorColor, inviteKey, joinSecret, idempotencyKey)
+	if err != nil {
+		return host.Record{}, err
 	}
-	if invalidText(name) {
-		return host.Record{}, errors.New("name must be one line of at most 256 bytes")
+	return ws.Append(ctx, signer, act)
+}
+
+// CreateNamedAct builds a game creation for either local or service signing.
+// An empty name preserves the existing create@0 encoding.
+func CreateNamedAct(name, creatorColor, inviteKey, joinSecret, idempotencyKey string) (host.Act, error) {
+	if name != "" && invalidText(name) {
+		return host.Act{}, errors.New("name must be one line of at most 256 bytes")
 	}
 	create, err := createPayload(creatorColor, inviteKey, joinSecret)
 	if err != nil {
-		return host.Record{}, err
+		return host.Act{}, err
 	}
-	payload, err := encode(CreateNamedPayload{
-		CreatorColor: create.CreatorColor,
-		Invitation:   create.Invitation,
-		Name:         name,
-	})
-	if err != nil {
-		return host.Record{}, err
+	schema := SchemaCreate
+	var body any = create
+	if name != "" {
+		schema = SchemaCreateNamed
+		body = CreateNamedPayload{CreatorColor: create.CreatorColor, Invitation: create.Invitation, Name: name}
 	}
-	return ws.Append(ctx, signer, host.Act{
-		Schema: SchemaCreateNamed, Payload: payload, IdempotencyKey: idempotencyKey,
-	})
+	payload, err := encode(body)
+	return host.Act{Schema: schema, Payload: payload, IdempotencyKey: idempotencyKey}, err
 }
 
 // Join records an attempt to take the open opponent seat.
@@ -1024,11 +1020,29 @@ func appendAtCurrentMove(ctx context.Context, ws *host.Workspace, signer ed25519
 	if !ok || current.LastMove == "" {
 		return host.Record{}, errors.New("game is not in play")
 	}
-	payload, err := encode(GamePayload{Game: game})
+	act, err := gameChainAct(schema, game, current.LastMove, idempotencyKey)
 	if err != nil {
 		return host.Record{}, err
 	}
-	return ws.Append(ctx, signer, host.Act{Schema: schema, Payload: payload, RestsOn: []string{current.LastMove}, IdempotencyKey: idempotencyKey})
+	return ws.Append(ctx, signer, act)
+}
+
+// ResignAct retains the player's chosen position when signing a resignation.
+func ResignAct(game, predecessor, idempotencyKey string) (host.Act, error) {
+	return gameChainAct(SchemaResign, game, predecessor, idempotencyKey)
+}
+
+// OfferDrawAct retains the player's chosen position when signing a draw offer.
+func OfferDrawAct(game, predecessor, idempotencyKey string) (host.Act, error) {
+	return gameChainAct(SchemaDrawOffer, game, predecessor, idempotencyKey)
+}
+
+func gameChainAct(schema, game, predecessor, idempotencyKey string) (host.Act, error) {
+	if invalidText(game) || invalidText(predecessor) {
+		return host.Act{}, errors.New("game and predecessor are required")
+	}
+	payload, err := encode(GamePayload{Game: game})
+	return host.Act{Schema: schema, Payload: payload, RestsOn: []string{predecessor}, IdempotencyKey: idempotencyKey}, err
 }
 
 // AcceptDraw records an answer to the currently pending offer.
@@ -1041,11 +1055,20 @@ func AcceptDraw(ctx context.Context, ws *host.Workspace, signer ed25519.PrivateK
 	if !ok || current.DrawOffer == "" {
 		return host.Record{}, errors.New("game has no pending draw offer")
 	}
-	payload, err := encode(DrawAcceptPayload{Game: game, Offer: current.DrawOffer})
+	act, err := AcceptDrawAct(game, current.DrawOffer, idempotencyKey)
 	if err != nil {
 		return host.Record{}, err
 	}
-	return ws.Append(ctx, signer, host.Act{Schema: SchemaDrawAccept, Payload: payload, RestsOn: []string{current.DrawOffer}, IdempotencyKey: idempotencyKey})
+	return ws.Append(ctx, signer, act)
+}
+
+// AcceptDrawAct answers the explicit offer without substituting a newer one.
+func AcceptDrawAct(game, offer, idempotencyKey string) (host.Act, error) {
+	if invalidText(game) || invalidText(offer) {
+		return host.Act{}, errors.New("game and offer are required")
+	}
+	payload, err := encode(DrawAcceptPayload{Game: game, Offer: offer})
+	return host.Act{Schema: SchemaDrawAccept, Payload: payload, RestsOn: []string{offer}, IdempotencyKey: idempotencyKey}, err
 }
 
 // Anchor uses the shared host identity vocabulary. Its force is determined by
